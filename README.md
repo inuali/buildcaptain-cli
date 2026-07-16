@@ -21,7 +21,7 @@ claude mcp add buildcaptain -- buildcaptain mcp
 codex mcp add buildcaptain -- buildcaptain mcp
 ```
 
-This exposes three tools: `list_run_configurations`, `trigger_run`, `get_run_status`. Run configurations are matched to the Git repository of the current working directory.
+This exposes three tools: `list_run_configurations`, `trigger_run`, `get_run_status`. Run configurations restricted to a Git repository are matched against the current working directory's `origin` remote; configurations marked "Any repository" in the app are always available.
 
 ## Manual use
 
@@ -32,7 +32,7 @@ buildcaptain status <operation-id>
 buildcaptain version
 ```
 
-All commands must run inside a Git repository with an `origin` remote; the app only offers configurations registered for that repository.
+Inside a Git repository with an `origin` remote, the app offers the configurations registered for that repository plus any-repository ones; elsewhere only the any-repository configurations are available. In a fork clone (where `origin` points at your fork, not the repository a configuration names), set `BUILDCAPTAIN_REPO=github.com/acme/widgets` to claim the upstream identity.
 
 ## How it works
 

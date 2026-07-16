@@ -29,13 +29,13 @@ func Run(ctx context.Context, version, workspaceDir string) error {
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "buildcaptain", Version: version},
 		&mcp.ServerOptions{
-			Instructions: "Use the listed safe run configurations to start Jenkins builds. Trigger returns an operation ID; poll get_run_status for progress.",
+			Instructions: "Use the listed safe run configurations to start Jenkins builds. Configurations restricted to a Git repository appear only when working in a matching checkout (override with BUILDCAPTAIN_REPO); configurations open to any repository are always available. Trigger returns an operation ID; poll get_run_status for progress.",
 		},
 	)
 
 	send := func(params gateway.SendParams) (*mcp.CallToolResult, any, error) {
 		params.Caller = caller
-		params.Workspace, params.WorkspaceError = workspace.Read(workspaceDir, caller)
+		params.Workspace = workspace.ReadOrEmpty(workspaceDir, caller)
 		response := gateway.Send(params)
 		text, err := gateway.FormatJSON(response)
 		if err != nil {
@@ -50,7 +50,7 @@ func Run(ctx context.Context, version, workspaceDir string) error {
 	mcp.AddTool(server,
 		&mcp.Tool{
 			Name:        "list_run_configurations",
-			Description: "List the safe Jenkins run configurations allowed for the current Git repository.",
+			Description: "List the safe Jenkins run configurations available here: those allowed for the current Git repository plus those open to any repository.",
 		},
 		func(ctx context.Context, request *mcp.CallToolRequest, input any) (*mcp.CallToolResult, any, error) {
 			return send(gateway.SendParams{Action: gateway.ActionListConfigurations})

@@ -25,19 +25,14 @@ type SendParams struct {
 	Action          Action
 	Caller          string
 	Workspace       *WorkspaceContext
-	WorkspaceError  error
 	ConfigurationID string
 	Inputs          map[string]string
 	OperationID     string
 }
 
-// Send performs a gateway round trip with the same semantics as the Swift
-// helper: if the socket is unavailable it launches BuildCaptain and retries
-// for up to five seconds before giving up.
+// Send performs a gateway round trip; if the socket is unavailable it
+// launches BuildCaptain and retries for up to five seconds before giving up.
 func Send(params SendParams) Response {
-	if params.WorkspaceError != nil {
-		return failureResponse(NewUUID(), params.WorkspaceError.Error())
-	}
 	request := Request{
 		Version:         ProtocolVersion,
 		ID:              NewUUID(),

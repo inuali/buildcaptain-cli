@@ -88,7 +88,7 @@ func run(arguments []string) error {
 
 func send(workspaceDir string, params gateway.SendParams) gateway.Response {
 	params.Caller = cliCaller
-	params.Workspace, params.WorkspaceError = workspace.Read(workspaceDir, cliCaller)
+	params.Workspace = workspace.ReadOrEmpty(workspaceDir, cliCaller)
 	return gateway.Send(params)
 }
 

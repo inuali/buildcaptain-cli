@@ -5,14 +5,36 @@ package workspace
 import (
 	"errors"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/inuali/buildcaptain-cli/internal/gateway"
 )
 
-// Read collects repository, branch, and commit for the given directory. The
-// error messages match the Swift helper so agent-facing behavior is unchanged.
+// ReadOrEmpty never fails: outside a usable Git repository it returns a
+// context with an empty repository, which the app treats as "match only
+// configurations open to any repository". BUILDCAPTAIN_REPO overrides the
+// detected repository — useful in fork clones whose origin differs from the
+// repository a run configuration names.
+func ReadOrEmpty(dir, caller string) *gateway.WorkspaceContext {
+	if override := Normalize(os.Getenv("BUILDCAPTAIN_REPO")); override != "" {
+		context := &gateway.WorkspaceContext{Repository: override, Caller: caller}
+		if branch, err := git(dir, "branch", "--show-current"); err == nil {
+			context.Branch = branch
+		}
+		if commit, err := git(dir, "rev-parse", "HEAD"); err == nil {
+			context.Commit = commit
+		}
+		return context
+	}
+	if context, err := Read(dir, caller); err == nil {
+		return context
+	}
+	return &gateway.WorkspaceContext{Caller: caller}
+}
+
+// Read collects repository, branch, and commit for the given directory.
 func Read(dir, caller string) (*gateway.WorkspaceContext, error) {
 	repository, err := git(dir, "config", "--get", "remote.origin.url")
 	if err != nil {

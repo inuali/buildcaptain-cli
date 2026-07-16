@@ -31,6 +31,30 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
+func TestReadOrEmptyOutsideGitRepository(t *testing.T) {
+	t.Setenv("BUILDCAPTAIN_REPO", "")
+	context := ReadOrEmpty(t.TempDir(), "test")
+	if context.Repository != "" || context.Caller != "test" || context.Branch != "" || context.Commit != "" {
+		t.Errorf("expected empty workspace with caller, got %+v", context)
+	}
+}
+
+func TestReadOrEmptyEnvOverride(t *testing.T) {
+	t.Setenv("BUILDCAPTAIN_REPO", "https://github.com/Acme/Widgets.git")
+	context := ReadOrEmpty(t.TempDir(), "test")
+	if context.Repository != "github.com/acme/widgets" {
+		t.Errorf("expected normalized override, got %q", context.Repository)
+	}
+}
+
+func TestReadOrEmptyIgnoresUnusableOverride(t *testing.T) {
+	t.Setenv("BUILDCAPTAIN_REPO", "not-a-repo")
+	context := ReadOrEmpty(t.TempDir(), "test")
+	if context.Repository != "" {
+		t.Errorf("unusable override should fall through to detection, got %q", context.Repository)
+	}
+}
+
 func TestReadUsesThisRepository(t *testing.T) {
 	context, err := Read(".", "test")
 	if err != nil {

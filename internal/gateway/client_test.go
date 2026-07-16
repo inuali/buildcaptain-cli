@@ -92,14 +92,3 @@ func TestSendLongSocketPath(t *testing.T) {
 	}
 }
 
-func TestSendWorkspaceErrorShortCircuits(t *testing.T) {
-	t.Setenv("BUILDCAPTAIN_GATEWAY_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
-	response := Send(SendParams{
-		Action:         ActionListConfigurations,
-		Caller:         "test",
-		WorkspaceError: os.ErrNotExist,
-	})
-	if response.OK || response.Error == "" {
-		t.Errorf("expected failure response, got %+v", response)
-	}
-}
