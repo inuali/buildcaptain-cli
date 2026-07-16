@@ -43,7 +43,7 @@ Set `BUILDCAPTAIN_GATEWAY_SOCKET` to override the socket path (useful for develo
 ## Development
 
 ```sh
-go build ./...
+./build.sh     # builds ./buildcaptain with the version stamped from git
 go test ./...
 ```
 
