@@ -1,0 +1,57 @@
+version: 2
+
+project_name: buildcaptain
+
+builds:
+  - id: buildcaptain
+    main: .
+    binary: buildcaptain
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+universal_binaries:
+  - id: buildcaptain
+    replace: true
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+
+brews:
+  - name: buildcaptain
+    repository:
+      owner: inuali
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/inuali/buildcaptain-cli
+    description: "CLI and MCP gateway for the BuildCaptain macOS Jenkins app"
+    license: MIT
+    install: |
+      bin.install "buildcaptain"
+    test: |
+      system "#{bin}/buildcaptain", "version"
+    commit_author:
+      name: goreleaser-bot
+      email: bot@goreleaser.com
