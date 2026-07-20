@@ -12,6 +12,18 @@ brew install inuali/tap/buildcaptain
 
 Or download a binary from [Releases](https://github.com/inuali/buildcaptain-cli/releases) and put it on your `PATH`.
 
+To build and install the CLI from this repository:
+
+```sh
+./install.sh
+```
+
+This installs `buildcaptain` in `/usr/local/bin`. Set `INSTALL_DIR` to use a different folder:
+
+```sh
+INSTALL_DIR="$HOME/bin" ./install.sh
+```
+
 Requirements: macOS 14+, the BuildCaptain app installed, and Agent Access enabled in the app.
 
 ## Use with AI agents (MCP)
