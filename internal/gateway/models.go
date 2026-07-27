@@ -41,24 +41,41 @@ type Request struct {
 	OperationID     string            `json:"operationID,omitempty"`
 }
 
-// Response mirrors AgentGatewayResponse. Configurations and Operation are kept
-// as raw JSON: the CLI only relays them, so it does not re-model the app's
-// nested types (AgentBuildOperation, BuildStatus, ...).
+// Response mirrors AgentGatewayResponse. Version and ID are transport
+// concerns — the socket carries one request per connection, so nothing reads
+// them — and never reach the CLI's own output; see the output package.
 type Response struct {
-	Version        int             `json:"version"`
-	ID             string          `json:"id"`
-	OK             bool            `json:"ok"`
-	Error          string          `json:"error,omitempty"`
-	Configurations json.RawMessage `json:"configurations,omitempty"`
-	Operation      json.RawMessage `json:"operation,omitempty"`
+	Version        int                   `json:"version"`
+	ID             string                `json:"id"`
+	OK             bool                  `json:"ok"`
+	Error          string                `json:"error,omitempty"`
+	Configurations []PublicConfiguration `json:"configurations,omitempty"`
+	Operation      *Operation            `json:"operation,omitempty"`
+
+	// Raw is the exact response line, kept for --verbose so the wire form
+	// stays inspectable after the CLI has reshaped it.
+	Raw json.RawMessage `json:"-"`
 }
 
 func failureResponse(requestID, message string) Response {
 	return Response{Version: ProtocolVersion, ID: requestID, OK: false, Error: message}
 }
 
-// FormatJSON re-encodes a response the way the Swift CLI printed it:
-// pretty-printed with sorted keys and unescaped slashes.
+// FormatRaw pretty-prints the response exactly as the app sent it, for
+// --verbose. Responses the CLI synthesized itself have no wire form, so those
+// fall back to re-encoding the struct.
+func FormatRaw(response Response) (string, error) {
+	if len(response.Raw) == 0 {
+		return FormatJSON(response)
+	}
+	var generic any
+	if err := json.Unmarshal(response.Raw, &generic); err != nil {
+		return "", err
+	}
+	return marshalSortedIndent(generic)
+}
+
+// FormatJSON re-encodes a response pretty-printed with sorted keys.
 func FormatJSON(response Response) (string, error) {
 	compact, err := json.Marshal(response)
 	if err != nil {

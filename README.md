@@ -35,16 +35,49 @@ codex mcp add buildcaptain -- buildcaptain mcp
 
 This exposes three tools: `list_run_configurations`, `trigger_run`, `get_run_status`. Run configurations restricted to a Git repository are matched against the current working directory's `origin` remote; configurations marked "Any repository" in the app are always available.
 
+`trigger_run` waits for the build to finish and reports the result, so a single tool call is usually the whole interaction. If it comes back with `"timed_out": true` the build is still going — pass the `run_id` from the result to `get_run_status`. Pass `"wait": false` to return as soon as the build is accepted.
+
 ## Manual use
 
 ```sh
-buildcaptain configs                                  # list allowed run configurations
-buildcaptain run <configuration-id> --input NAME=VALUE
-buildcaptain status <operation-id>
+buildcaptain configs                        # what this repository is allowed to start
+buildcaptain run deploy-staging             # start it and wait for the result
+buildcaptain run deploy-staging --no-wait   # start it and print a run ID to poll
+buildcaptain status                         # report on the most recent run
+buildcaptain status run_1a2b3c              # report on a specific run
 buildcaptain version
 ```
 
+Supply inputs with `--input NAME=VALUE`, once per input. `buildcaptain configs` prints the exact `run` command for each configuration, placeholders included.
+
 Inside a Git repository with an `origin` remote, the app offers the configurations registered for that repository plus any-repository ones; elsewhere only the any-repository configurations are available. In a fork clone (where `origin` points at your fork, not the repository a configuration names), set `BUILDCAPTAIN_REPO=github.com/acme/widgets` to claim the upstream identity.
+
+### Run IDs
+
+`run` and `status` print one identifier, `run_id`, and it is the only value you ever pass back:
+
+```
+run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d
+```
+
+Any unambiguous prefix of at least six characters works, as with Git commits — `buildcaptain status run_1a2b3c`. Omitting it entirely reports on the most recent run started from this Mac.
+
+The values under `jenkins` (`queue_id`, `build_number`, and their URLs) are links for people. They are not accepted by `status`.
+
+### Output
+
+Every command prints exactly one JSON document on stdout — the result, or `{"ok": false, "error": ...}` — so it can be parsed without filtering. Progress lines while `run` waits go to stderr; `--quiet` suppresses them. `--verbose` adds the raw gateway response under `raw`.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| 0 | the build succeeded, or `--no-wait` accepted it |
+| 1 | the request failed: not allowed, app unreachable, bad arguments |
+| 2 | the build finished unsuccessfully, or approval was rejected |
+| 3 | `--timeout` elapsed; the build is still running |
+
+`run` waits up to 30 minutes by default. `--timeout 0` waits indefinitely.
 
 ## How it works
 

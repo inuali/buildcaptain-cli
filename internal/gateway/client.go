@@ -92,6 +92,7 @@ func roundTrip(request Request) (Response, error) {
 	if err := json.Unmarshal(raw[:newline], &response); err != nil {
 		return Response{}, err
 	}
+	response.Raw = append(json.RawMessage(nil), raw[:newline]...)
 	return response, nil
 }
 
