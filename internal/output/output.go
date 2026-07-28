@@ -31,8 +31,13 @@ type Run struct {
 	UpdatedAt     string            `json:"updated_at,omitempty"`
 	Jenkins       *Jenkins          `json:"jenkins,omitempty"`
 	TimedOut      bool              `json:"timed_out,omitempty"`
-	Poll          string            `json:"poll,omitempty"`
-	Raw           json.RawMessage   `json:"raw,omitempty"`
+	// Poll and Wait are the literal commands that continue from here, present
+	// only while the run can still change: Poll checks once and returns, Wait
+	// blocks until there is an answer. Callers copy a command far more
+	// reliably than they assemble one.
+	Poll string          `json:"poll,omitempty"`
+	Wait string          `json:"wait,omitempty"`
+	Raw  json.RawMessage `json:"raw,omitempty"`
 }
 
 // Jenkins groups the Jenkins-side identifiers. They are nested and named for
@@ -83,9 +88,8 @@ func NewFailure(message, hint string) Failure {
 	return Failure{OK: false, Error: message, Hint: hint}
 }
 
-// NewRun projects a gateway operation onto the printed shape. pollHint is the
-// command to poll with, included only when the run is still moving.
-func NewRun(operation *gateway.Operation, pollHint string) Run {
+// NewRun projects a gateway operation onto the printed shape.
+func NewRun(operation *gateway.Operation) Run {
 	run := Run{
 		OK:            true,
 		RunID:         runs.Format(operation.ID),
@@ -98,7 +102,12 @@ func NewRun(operation *gateway.Operation, pollHint string) Run {
 		Inputs:        operation.Inputs,
 		RequestedAt:   operation.RequestedAt.ISO8601(),
 		UpdatedAt:     operation.UpdatedAt.ISO8601(),
-		Poll:          pollHint,
+	}
+	// A finished build has no next step; offering one would invite a pointless
+	// extra call.
+	if operation.IsActive() {
+		run.Poll = PollCommand(operation)
+		run.Wait = ResumeCommand(operation)
 	}
 	if len(run.Inputs) == 0 {
 		run.Inputs = nil
@@ -128,10 +137,15 @@ func newJenkins(operation *gateway.Operation) *Jenkins {
 	return &jenkins
 }
 
-// PollCommand is the literal command that reports on this run. Callers follow
-// a command they can copy far more reliably than one they must assemble.
+// PollCommand checks this run once and returns.
 func PollCommand(operation *gateway.Operation) string {
 	return "buildcaptain status " + runs.Format(operation.ID)
+}
+
+// ResumeCommand blocks on this run until it finishes. It is what a caller
+// reaches for after a wait was cut short.
+func ResumeCommand(operation *gateway.Operation) string {
+	return "buildcaptain wait " + runs.Format(operation.ID)
 }
 
 // NewConfigs projects the gateway's configuration list, giving each entry the

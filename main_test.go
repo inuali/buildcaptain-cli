@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -21,7 +22,7 @@ func TestParseRunFlags(t *testing.T) {
 	flags, positional, err := parseFlags([]string{
 		"deploy-staging", "--input", "TARGET=staging", "--input=branch=release/1.4",
 		"--no-wait", "--timeout", "90s", "--quiet", "--verbose",
-	}, true)
+	}, policyRun)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestParseRunFlags(t *testing.T) {
 }
 
 func TestWaitingIsTheDefault(t *testing.T) {
-	flags, _, err := parseFlags([]string{"deploy-staging"}, true)
+	flags, _, err := parseFlags([]string{"deploy-staging"}, policyRun)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +55,7 @@ func TestWaitingIsTheDefault(t *testing.T) {
 
 // A value containing "=" must survive; deploy inputs routinely carry them.
 func TestInputValuesKeepEqualsSigns(t *testing.T) {
-	flags, _, err := parseFlags([]string{"--input", "ARGS=--flag=1 --other=2"}, true)
+	flags, _, err := parseFlags([]string{"--input", "ARGS=--flag=1 --other=2"}, policyRun)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,14 +64,31 @@ func TestInputValuesKeepEqualsSigns(t *testing.T) {
 	}
 }
 
-func TestRunOnlyFlagsRejectedElsewhere(t *testing.T) {
+func TestFlagsAreRefusedOnCommandsThatIgnoreThem(t *testing.T) {
 	for _, flag := range []string{"--no-wait", "--quiet", "--timeout", "--input"} {
-		if _, _, err := parseFlags([]string{flag, "x"}, false); err == nil {
-			t.Errorf("%s should be rejected outside run", flag)
+		if _, _, err := parseFlags([]string{flag, "x"}, policyReading); err == nil {
+			t.Errorf("%s should be rejected on configs and status", flag)
+		}
+	}
+	// wait follows a build, so it takes the waiting flags but not the ones
+	// that only mean something when starting one.
+	for _, arguments := range [][]string{{"--timeout", "90s"}, {"--quiet"}} {
+		if _, _, err := parseFlags(arguments, policyWait); err != nil {
+			t.Errorf("wait should accept %v: %v", arguments, err)
+		}
+	}
+	for _, arguments := range [][]string{{"--no-wait"}, {"--input", "A=B"}} {
+		_, _, err := parseFlags(arguments, policyWait)
+		if err == nil {
+			t.Errorf("wait should reject %v", arguments)
+			continue
+		}
+		if !strings.Contains(err.Error(), "only applies to buildcaptain run.") {
+			t.Errorf("error for %v should name the right command, got %q", arguments, err)
 		}
 	}
 	// --verbose applies everywhere.
-	if _, _, err := parseFlags([]string{"--verbose"}, false); err != nil {
+	if _, _, err := parseFlags([]string{"--verbose"}, policyReading); err != nil {
 		t.Errorf("--verbose should be accepted anywhere: %v", err)
 	}
 }
@@ -85,7 +103,7 @@ func TestFlagErrorsAreSpecific(t *testing.T) {
 		{"--input"},
 	}
 	for _, arguments := range cases {
-		if _, _, err := parseFlags(arguments, true); err == nil {
+		if _, _, err := parseFlags(arguments, policyRun); err == nil {
 			t.Errorf("parseFlags(%v) should have failed", arguments)
 		}
 	}

@@ -320,6 +320,117 @@ func TestTriggerRejectionExplainsWhereToLook(t *testing.T) {
 	}
 }
 
+// wait is the resumable half of run: same following, same exit codes, but
+// reached from a run ID after an earlier wait was cut short.
+func TestWaitFollowsAnAlreadyStartedRun(t *testing.T) {
+	fastPolling(t)
+	fake := &fakeGateway{states: []gateway.Operation{
+		operation(gateway.StateQueued, ""),
+		operation(gateway.StateRunning, ""),
+		operation(gateway.StateCompleted, "success"),
+	}}
+	options := fake.start(t)
+	runs.Remember(operationUUID, "deploy-staging")
+
+	var progress []string
+	result := Wait(context.Background(), WaitOptions{
+		Options: options,
+		RunID:   "run_1a2b3c",
+		Timeout: 10 * time.Second,
+		Progress: func(op *gateway.Operation) {
+			progress = append(progress, op.StateDescription())
+		},
+	})
+	if code := ExitCode(result); code != ExitOK {
+		t.Errorf("exit code = %d, want %d", code, ExitOK)
+	}
+	if payload := runPayload(t, result); payload.State != gateway.StateCompleted {
+		t.Errorf("state = %s", payload.State)
+	}
+	if len(progress) < 2 || progress[len(progress)-1] != "completed (success)" {
+		t.Errorf("progress = %v", progress)
+	}
+}
+
+func TestWaitOnAFinishedRunReturnsImmediately(t *testing.T) {
+	fake := &fakeGateway{states: []gateway.Operation{operation(gateway.StateCompleted, "failure")}}
+	options := fake.start(t)
+	runs.Remember(operationUUID, "deploy-staging")
+
+	result := Wait(context.Background(), WaitOptions{
+		Options: options, RunID: "", Timeout: time.Hour,
+	})
+	if code := ExitCode(result); code != ExitBuildFailed {
+		t.Errorf("exit code = %d, want %d", code, ExitBuildFailed)
+	}
+	// One read to learn the state, and no follow-up polling after it.
+	if fake.pollCount() != 1 {
+		t.Errorf("a finished run should need one read, got %d", fake.pollCount())
+	}
+}
+
+func TestWaitTimesOutLikeRun(t *testing.T) {
+	fastPolling(t)
+	fake := &fakeGateway{states: []gateway.Operation{operation(gateway.StateRunning, "")}}
+	options := fake.start(t)
+	runs.Remember(operationUUID, "deploy-staging")
+
+	result := Wait(context.Background(), WaitOptions{
+		Options: options, RunID: "", Timeout: 10 * time.Millisecond,
+	})
+	if code := ExitCode(result); code != ExitTimedOut {
+		t.Errorf("exit code = %d, want %d", code, ExitTimedOut)
+	}
+	if payload := runPayload(t, result); payload.Wait == "" {
+		t.Error("a timed-out wait must say how to resume")
+	}
+}
+
+// The run ID has to reach the caller before any waiting: a process killed
+// mid-wait has then already been told which build it started.
+func TestTriggerAnnouncesTheRunBeforeWaiting(t *testing.T) {
+	fastPolling(t)
+	fake := &fakeGateway{states: []gateway.Operation{
+		operation(gateway.StateRunning, ""),
+		operation(gateway.StateCompleted, "success"),
+	}}
+	options := fake.start(t)
+
+	announced := ""
+	polledBeforeAnnouncement := -1
+	Trigger(context.Background(), TriggerOptions{
+		Options: options, Configuration: "deploy-staging", Wait: true, Timeout: 10 * time.Second,
+		Accepted: func(op *gateway.Operation) {
+			announced = runs.Format(op.ID)
+			polledBeforeAnnouncement = fake.pollCount()
+		},
+	})
+	if announced != runs.Format(operationUUID) {
+		t.Errorf("announced %q, want %q", announced, runs.Format(operationUUID))
+	}
+	if polledBeforeAnnouncement != 0 {
+		t.Errorf("announcement came after %d polls; it must precede the wait", polledBeforeAnnouncement)
+	}
+}
+
+// An active run offers both continuations: one that checks and returns, one
+// that blocks until there is an answer.
+func TestActiveRunOffersBothContinuations(t *testing.T) {
+	fake := &fakeGateway{states: []gateway.Operation{operation(gateway.StateQueued, "")}}
+	options := fake.start(t)
+
+	result := Trigger(context.Background(), TriggerOptions{
+		Options: options, Configuration: "deploy-staging", Wait: false,
+	})
+	payload := runPayload(t, result)
+	if payload.Poll != "buildcaptain status "+payload.RunID {
+		t.Errorf("poll = %q", payload.Poll)
+	}
+	if payload.Wait != "buildcaptain wait "+payload.RunID {
+		t.Errorf("wait = %q", payload.Wait)
+	}
+}
+
 func TestStatusResolvesAbbreviatedRunID(t *testing.T) {
 	fake := &fakeGateway{states: []gateway.Operation{operation(gateway.StateCompleted, "success")}}
 	options := fake.start(t)
@@ -453,9 +564,9 @@ func TestWaitGivesUpWhenTheAppStaysAway(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a failure payload, got %#v", result.Payload)
 	}
-	// The build is still out there, so the caller must be told how to find it.
-	if !strings.Contains(failure.Hint, "buildcaptain status run_") {
-		t.Errorf("hint should carry the status command, got %q", failure.Hint)
+	// The build is still out there, so the caller must be told how to resume.
+	if !strings.Contains(failure.Hint, "buildcaptain wait run_") {
+		t.Errorf("hint should carry the resume command, got %q", failure.Hint)
 	}
 	if !strings.Contains(failure.Error, "still be running") {
 		t.Errorf("error should not claim the build failed, got %q", failure.Error)

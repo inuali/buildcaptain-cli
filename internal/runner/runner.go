@@ -63,6 +63,27 @@ type TriggerOptions struct {
 	Timeout time.Duration
 	// Progress is called once per observed state change while waiting.
 	Progress func(*gateway.Operation)
+	// Accepted is called once, before any waiting, as soon as BuildCaptain has
+	// taken the build. It is what lets a caller whose process is killed
+	// mid-wait still have the run ID.
+	Accepted func(*gateway.Operation)
+}
+
+// WaitOptions describes a wait on a run that is already under way.
+type WaitOptions struct {
+	Options
+	// RunID may be any accepted spelling, or empty for the most recent run.
+	RunID    string
+	Timeout  time.Duration
+	Progress func(*gateway.Operation)
+}
+
+// followSpec is the part of a request the wait loop needs, shared by the
+// commands that start a build and the ones that only watch it.
+type followSpec struct {
+	options  Options
+	timeout  time.Duration
+	progress func(*gateway.Operation)
 }
 
 // Configs lists the run configurations allowed here.
@@ -96,27 +117,73 @@ func Trigger(ctx context.Context, options TriggerOptions) Result {
 		}
 	}
 	// Remembered before any waiting, so an interrupted wait still leaves the
-	// caller able to say `buildcaptain status` with no argument.
+	// caller able to name this run.
 	runs.Remember(operation.ID, operation.ConfigurationKey)
+	if options.Accepted != nil {
+		options.Accepted(operation)
+	}
 
 	timedOut, lostContact := false, false
 	if options.Wait {
 		if options.Progress != nil {
 			options.Progress(operation)
 		}
-		operation, timedOut, lostContact, response = follow(ctx, options, operation, response)
+		operation, timedOut, lostContact, response = follow(ctx, followSpec{
+			options:  options.Options,
+			timeout:  options.Timeout,
+			progress: options.Progress,
+		}, operation, response)
 	}
 	if lostContact {
-		// The build itself is unaffected, so say so and hand back the command
-		// that picks the thread back up.
-		return Result{
-			Payload: output.NewFailure(
-				"Lost contact with BuildCaptain while waiting. The build may still be running.",
-				"Once the app is running again: "+output.PollCommand(operation)),
-			OK: false,
-		}
+		return lostContactResult(operation)
 	}
 	return runResult(operation, response, options.Verbose, timedOut)
+}
+
+// Wait follows a run that is already under way to a terminal state. It is the
+// resumable half of Trigger: same waiting, same exit codes, but reached from a
+// run ID rather than from starting the build.
+func Wait(ctx context.Context, options WaitOptions) Result {
+	operationUUID, err := runs.Resolve(options.RunID)
+	if err != nil {
+		return Result{Payload: output.NewFailure(err.Error(), ""), OK: false}
+	}
+	response := send(options.Options, gateway.SendParams{
+		Action:      gateway.ActionStatus,
+		OperationID: operationUUID,
+	})
+	if !response.OK {
+		return failure(response, options.Verbose,
+			"BuildCaptain only keeps recent runs. Start a new one with buildcaptain run <configuration>.")
+	}
+	operation := response.Operation
+	if operation == nil {
+		return Result{Payload: output.NewFailure("BuildCaptain returned no run for that ID.", ""), OK: false}
+	}
+	if options.Progress != nil {
+		options.Progress(operation)
+	}
+	operation, timedOut, lostContact, response := follow(ctx, followSpec{
+		options:  options.Options,
+		timeout:  options.Timeout,
+		progress: options.Progress,
+	}, operation, response)
+	if lostContact {
+		return lostContactResult(operation)
+	}
+	return runResult(operation, response, options.Verbose, timedOut)
+}
+
+// lostContactResult reports a wait that ran out of patience with a missing
+// app. The build itself is unaffected, so it says so and hands back the
+// command that picks the thread back up.
+func lostContactResult(operation *gateway.Operation) Result {
+	return Result{
+		Payload: output.NewFailure(
+			"Lost contact with BuildCaptain while waiting. The build may still be running.",
+			"Once the app is running again: "+output.ResumeCommand(operation)),
+		OK: false,
+	}
 }
 
 // Status reports on one run. An empty runID means the most recent one.
@@ -141,7 +208,7 @@ func Status(ctx context.Context, options Options, runID string) Result {
 // kept so --verbose shows the wire form of the state actually reported.
 func follow(
 	ctx context.Context,
-	options TriggerOptions,
+	spec followSpec,
 	operation *gateway.Operation,
 	response gateway.Response,
 ) (result *gateway.Operation, timedOut, lostContact bool, last gateway.Response) {
@@ -149,8 +216,8 @@ func follow(
 		return operation, false, false, response
 	}
 	deadline := time.Time{}
-	if options.Timeout > 0 {
-		deadline = time.Now().Add(options.Timeout)
+	if spec.timeout > 0 {
+		deadline = time.Now().Add(spec.timeout)
 	}
 	started := time.Now()
 	state := operation.State + "/" + operation.Result
@@ -172,7 +239,7 @@ func follow(
 		case <-time.After(interval):
 		}
 
-		polled := send(options.Options, gateway.SendParams{
+		polled := send(spec.options, gateway.SendParams{
 			Action:      gateway.ActionStatus,
 			OperationID: operation.ID,
 		})
@@ -188,8 +255,8 @@ func follow(
 			operation, response = polled.Operation, polled
 			if current := operation.State + "/" + operation.Result; current != state {
 				state = current
-				if options.Progress != nil {
-					options.Progress(operation)
+				if spec.progress != nil {
+					spec.progress(operation)
 				}
 			}
 			if !operation.IsActive() {
@@ -208,14 +275,7 @@ func runResult(
 	verbose bool,
 	timedOut bool,
 ) Result {
-	// The poll hint belongs only where it is the caller's actual next step:
-	// a run still in flight. Adding it to a finished build would invite a
-	// pointless extra call.
-	pollHint := ""
-	if operation.IsActive() {
-		pollHint = output.PollCommand(operation)
-	}
-	payload := output.NewRun(operation, pollHint)
+	payload := output.NewRun(operation)
 	payload.TimedOut = timedOut
 	if verbose {
 		payload.Raw = rawOf(response)

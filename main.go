@@ -20,6 +20,7 @@ import (
 	"github.com/inuali/buildcaptain-cli/internal/mcpserver"
 	"github.com/inuali/buildcaptain-cli/internal/output"
 	"github.com/inuali/buildcaptain-cli/internal/runner"
+	"github.com/inuali/buildcaptain-cli/internal/runs"
 )
 
 // version is stamped by the release build via -ldflags.
@@ -32,21 +33,26 @@ const usage = `BuildCaptain agent gateway
 Usage:
   buildcaptain configs                       List the run configurations allowed here
   buildcaptain run <configuration> [flags]   Start a build and wait for it to finish
-  buildcaptain status [<run-id>]             Report on a run (default: the most recent)
+  buildcaptain wait [<run-id>]               Block on a running build until it finishes
+  buildcaptain status [<run-id>]             Report on a run once and return
   buildcaptain mcp                           Serve the gateway to AI agents over MCP
   buildcaptain version
 
 Flags for run:
   --input NAME=VALUE   Supply one allowed input; repeat for more
   --no-wait            Return as soon as the build is accepted, with a run ID to poll
+
+Flags for run and wait:
   --timeout DURATION   Give up waiting after this long (default 30m, 0 waits forever)
   --quiet              Do not print progress to stderr
 
 Flags for every command:
   --verbose            Include the raw gateway response under "raw"
 
-Run IDs look like run_1a2b3c4d…; run and status both print one. Any unambiguous
-prefix of at least 6 characters works: buildcaptain status run_1a2b3c.
+Run IDs look like run_1a2b3c4d…; every command that touches a run prints one.
+Any unambiguous prefix of at least 6 characters works: buildcaptain wait run_1a2b3c.
+Omitting the run ID uses the most recent run started from this Mac — convenient,
+but ambiguous when several are in flight, so keep the ID when it matters.
 
 Exit codes:
   0  the build succeeded, or --no-wait accepted it
@@ -79,7 +85,7 @@ func run(arguments []string) int {
 		return runner.ExitOK
 
 	case "configs":
-		flags, _, err := parseFlags(rest, false)
+		flags, _, err := parseFlags(rest, policyReading)
 		if err != nil {
 			return fail(err.Error(), "")
 		}
@@ -90,7 +96,7 @@ func run(arguments []string) int {
 		}))
 
 	case "run":
-		flags, positional, err := parseFlags(rest, true)
+		flags, positional, err := parseFlags(rest, policyRun)
 		if err != nil {
 			return fail(err.Error(), "")
 		}
@@ -111,25 +117,43 @@ func run(arguments []string) int {
 			Wait:          !flags.noWait,
 			Timeout:       flags.timeout,
 			Progress:      progressPrinter(flags.quiet),
+			Accepted:      acceptancePrinter(flags.quiet || flags.noWait),
+		}))
+
+	case "wait":
+		flags, positional, err := parseFlags(rest, policyWait)
+		if err != nil {
+			return fail(err.Error(), "")
+		}
+		if len(positional) > 1 {
+			return fail("Usage: buildcaptain wait [<run-id>] [--timeout DURATION]", "")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return report(runner.Wait(ctx, runner.WaitOptions{
+			Options: runner.Options{
+				WorkspaceDir: workspaceDir,
+				Caller:       cliCaller,
+				Verbose:      flags.verbose,
+			},
+			RunID:    first(positional),
+			Timeout:  flags.timeout,
+			Progress: progressPrinter(flags.quiet),
 		}))
 
 	case "status":
-		flags, positional, err := parseFlags(rest, false)
+		flags, positional, err := parseFlags(rest, policyReading)
 		if err != nil {
 			return fail(err.Error(), "")
 		}
 		if len(positional) > 1 {
 			return fail("Usage: buildcaptain status [<run-id>]", "")
 		}
-		runID := ""
-		if len(positional) == 1 {
-			runID = positional[0]
-		}
 		return report(runner.Status(context.Background(), runner.Options{
 			WorkspaceDir: workspaceDir,
 			Caller:       cliCaller,
 			Verbose:      flags.verbose,
-		}, runID))
+		}, first(positional)))
 
 	case "version":
 		fmt.Println(version)
@@ -152,11 +176,35 @@ type flagSet struct {
 	verbose bool
 }
 
-// parseFlags reads the CLI's small, fixed flag vocabulary. allowRunFlags keeps
-// --input and the waiting flags off commands where they would mean nothing.
-func parseFlags(arguments []string, allowRunFlags bool) (flagSet, []string, error) {
+// flagPolicy says which of the CLI's flags a command accepts, so a flag used
+// on the wrong command is refused by name instead of being ignored.
+type flagPolicy struct {
+	// starting covers the flags that only make sense when beginning a build.
+	starting bool
+	// waiting covers the flags that shape how a command follows a build.
+	waiting bool
+}
+
+var (
+	policyRun     = flagPolicy{starting: true, waiting: true}
+	policyWait    = flagPolicy{waiting: true}
+	policyReading = flagPolicy{}
+)
+
+// parseFlags reads the CLI's small, fixed flag vocabulary.
+func parseFlags(arguments []string, policy flagPolicy) (flagSet, []string, error) {
 	flags := flagSet{inputs: map[string]string{}, timeout: runner.DefaultTimeout}
 	var positional []string
+
+	refuse := func(flag string, allowed bool) error {
+		if allowed {
+			return nil
+		}
+		if flag == "--input" || flag == "--no-wait" {
+			return fmt.Errorf("%s only applies to buildcaptain run.", flag)
+		}
+		return fmt.Errorf("%s only applies to buildcaptain run and buildcaptain wait.", flag)
+	}
 
 	for index := 0; index < len(arguments); index++ {
 		argument := arguments[index]
@@ -182,18 +230,18 @@ func parseFlags(arguments []string, allowRunFlags bool) (flagSet, []string, erro
 		case "--verbose":
 			flags.verbose = true
 		case "--quiet":
-			if !allowRunFlags {
-				return flags, nil, fmt.Errorf("--quiet only applies to buildcaptain run.")
+			if err := refuse(argument, policy.waiting); err != nil {
+				return flags, nil, err
 			}
 			flags.quiet = true
 		case "--no-wait":
-			if !allowRunFlags {
-				return flags, nil, fmt.Errorf("--no-wait only applies to buildcaptain run.")
+			if err := refuse(argument, policy.starting); err != nil {
+				return flags, nil, err
 			}
 			flags.noWait = true
 		case "--timeout":
-			if !allowRunFlags {
-				return flags, nil, fmt.Errorf("--timeout only applies to buildcaptain run.")
+			if err := refuse(argument, policy.waiting); err != nil {
+				return flags, nil, err
 			}
 			raw, err := next("--timeout")
 			if err != nil {
@@ -205,8 +253,8 @@ func parseFlags(arguments []string, allowRunFlags bool) (flagSet, []string, erro
 			}
 			flags.timeout = duration
 		case "--input":
-			if !allowRunFlags {
-				return flags, nil, fmt.Errorf("--input only applies to buildcaptain run.")
+			if err := refuse(argument, policy.starting); err != nil {
+				return flags, nil, err
 			}
 			raw, err := next("--input")
 			if err != nil {
@@ -225,6 +273,28 @@ func parseFlags(arguments []string, allowRunFlags bool) (flagSet, []string, erro
 		}
 	}
 	return flags, positional, nil
+}
+
+func first(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+// acceptancePrinter announces the run ID on stderr the moment BuildCaptain
+// takes the build, before any waiting. A caller whose process is killed
+// mid-wait — a harness with a short command window, say — has then already
+// been told the ID and the command that resumes from it, instead of losing
+// track of a build that is still running.
+func acceptancePrinter(quiet bool) func(*gateway.Operation) {
+	if quiet {
+		return nil
+	}
+	return func(operation *gateway.Operation) {
+		fmt.Fprintf(os.Stderr, "%s: started %s — resume with: %s\n",
+			operation.ConfigurationKey, runs.Format(operation.ID), output.ResumeCommand(operation))
+	}
 }
 
 // progressPrinter reports each state change on stderr, so a caller watching

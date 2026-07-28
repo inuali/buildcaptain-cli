@@ -29,8 +29,9 @@ always available.
 
 trigger_run waits for the build to finish and reports the result. If it returns
 "timed_out": true the build is still going — call get_run_status with the "run_id"
-from the result. That run_id is the only identifier you ever pass back; the values
-under "jenkins" are links for people, not handles for these tools.`
+from the result, adding "wait_seconds" to block until it finishes rather than
+polling in a loop. That run_id is the only identifier you ever pass back; the
+values under "jenkins" are links for people, not handles for these tools.`
 
 type triggerInput struct {
 	Configuration string            `json:"configuration" jsonschema:"The configuration field from list_run_configurations"`
@@ -47,6 +48,9 @@ type statusInput struct {
 	// Optional: omitting it reports on the most recent run, which is what an
 	// agent that lost track of the ID actually wants.
 	RunID string `json:"run_id,omitempty" jsonschema:"The run_id returned by trigger_run; omit for the most recent run"`
+	// WaitSecs turns a single read into a blocking follow, so an agent whose
+	// trigger_run timed out does not have to build its own polling loop.
+	WaitSecs int `json:"wait_seconds,omitempty" jsonschema:"Block for up to this many seconds waiting for the run to finish (default 0, report once and return)"`
 
 	// OperationID is the pre-1.0 name for RunID, accepted for the same reason.
 	OperationID string `json:"operation_id,omitempty" jsonschema:"Deprecated alias for run_id"`
@@ -113,12 +117,20 @@ func Run(ctx context.Context, version, workspaceDir string) error {
 		&mcp.Tool{
 			Name: "get_run_status",
 			Description: "Report the current state and result of a run started by trigger_run. " +
-				"Omit run_id for the most recent run.",
+				"Omit run_id for the most recent run. Set wait_seconds to block until the run " +
+				"finishes instead of polling in a loop.",
 		},
 		func(ctx context.Context, request *mcp.CallToolRequest, input statusInput) (*mcp.CallToolResult, any, error) {
 			runID := input.RunID
 			if runID == "" {
 				runID = input.OperationID
+			}
+			if input.WaitSecs > 0 {
+				return result(runner.Wait(ctx, runner.WaitOptions{
+					Options: options,
+					RunID:   runID,
+					Timeout: time.Duration(input.WaitSecs) * time.Second,
+				}))
 			}
 			return result(runner.Status(ctx, options, runID))
 		},
