@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 )
 
-const appBundleID = "com.buildcaptain.app"
+const appBundleID = "dev.buildcaptain.app"
 
 // CandidateSocketPaths returns the gateway socket locations to try, most
 // likely first. The sandboxed (Mac App Store) app binds inside its container;

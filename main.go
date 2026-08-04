@@ -46,7 +46,7 @@ Flags for run and wait:
   --timeout DURATION   Give up waiting after this long (default 30m, 0 waits forever)
   --quiet              Do not print progress to stderr
 
-Flags for every command:
+Flags for configs, run, wait, and status:
   --verbose            Include the raw gateway response under "raw"
 
 Run IDs look like run_1a2b3c4d…; every command that touches a run prints one.
@@ -55,7 +55,7 @@ Omitting the run ID uses the most recent run started from this Mac — convenien
 but ambiguous when several are in flight, so keep the ID when it matters.
 
 Exit codes:
-  0  the build succeeded, or --no-wait accepted it
+  0  the request succeeded; a finished build succeeded
   1  the request failed (not allowed, app unreachable, bad arguments)
   2  the build finished unsuccessfully, or was rejected
   3  the wait timed out; the build is still running

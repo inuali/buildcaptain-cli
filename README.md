@@ -1,6 +1,6 @@
 # buildcaptain CLI
 
-Command-line companion for the [BuildCaptain](https://github.com/inuali) macOS app. It connects to the app's local agent gateway and lets AI coding agents (Claude Code, Codex, any MCP client) list and trigger the safe Jenkins run configurations you defined in the app — nothing more.
+Command-line companion for the [BuildCaptain](https://buildcaptain.dev) macOS app. It connects to the app's local agent gateway and lets AI coding agents (Claude Code, Codex, any MCP client) list, trigger, and follow the safe Jenkins run configurations you defined in the app.
 
 The CLI never talks to Jenkins itself. All requests go through the BuildCaptain app on the same Mac, which enforces per-repository allow-lists, parameter rules, and optional human approval.
 
@@ -56,7 +56,7 @@ Inside a Git repository with an `origin` remote, the app offers the configuratio
 
 ### Run IDs
 
-`run` and `status` print one identifier, `run_id`, and it is the only value you ever pass back:
+`run`, `wait`, and `status` print one identifier, `run_id`, and it is the only value you ever pass back:
 
 ```
 run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d
@@ -85,13 +85,13 @@ buildcaptain wait run_1a2b3c --timeout 90s      # resume, as often as needed
 
 ### Output
 
-Every command prints exactly one JSON document on stdout — the result, or `{"ok": false, "error": ...}` — so it can be parsed without filtering. Progress lines while `run` waits go to stderr; `--quiet` suppresses them. `--verbose` adds the raw gateway response under `raw`.
+The operational commands (`configs`, `run`, `wait`, and `status`) print exactly one JSON document on stdout — the result, or `{"ok": false, "error": ...}` — so they can be parsed without filtering. `version` prints the version string, while `mcp` uses the MCP stdio protocol. Progress lines from `run` and `wait` go to stderr; `--quiet` suppresses them. `--verbose` adds the raw gateway response under `raw` for the operational commands.
 
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | the build succeeded, or `--no-wait` accepted it |
+| 0 | the request succeeded; if the build finished, it succeeded |
 | 1 | the request failed: not allowed, app unreachable, bad arguments |
 | 2 | the build finished unsuccessfully, or approval was rejected |
 | 3 | `--timeout` elapsed; the build is still running |
@@ -100,7 +100,7 @@ Every command prints exactly one JSON document on stdout — the result, or `{"o
 
 ## How it works
 
-The CLI connects to a Unix socket the app exposes (inside the app's sandbox container, `~/Library/Containers/com.buildcaptain.app/Data/Library/Application Support/BuildCaptain/AgentGateway/`, or the plain Application Support path for development builds). If the app isn't running, the CLI launches it in the background and retries for a few seconds. Connections are restricted to the same user, and every trigger can require approval in the app.
+The CLI connects to a Unix socket the app exposes inside its sandbox container at `~/Library/Containers/dev.buildcaptain.app/Data/Library/Application Support/BuildCaptain/AgentGateway/`. It also checks the plain Application Support path for explicitly unsandboxed local builds. If the app isn't running, the CLI launches `dev.buildcaptain.app` in the background and retries for a few seconds. Connections are restricted to the same user, and every trigger can require approval in the app.
 
 Set `BUILDCAPTAIN_GATEWAY_SOCKET` to override the socket path (useful for development).
 

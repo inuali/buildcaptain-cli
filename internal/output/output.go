@@ -16,7 +16,7 @@ import (
 	"github.com/inuali/buildcaptain-cli/internal/runs"
 )
 
-// Run is what `run` and `status` print.
+// Run is what `run`, `wait`, and `status` print.
 type Run struct {
 	OK            bool              `json:"ok"`
 	RunID         string            `json:"run_id"`
