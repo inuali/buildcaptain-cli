@@ -45,7 +45,7 @@ brews:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: https://github.com/inuali/buildcaptain-cli
+    homepage: https://buildcaptain.dev
     description: "CLI and MCP gateway for the BuildCaptain macOS Jenkins app"
     license: MIT
     install: |
