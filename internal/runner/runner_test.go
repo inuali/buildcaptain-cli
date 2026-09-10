@@ -31,13 +31,34 @@ type fakeGateway struct {
 	// failStatusPolls makes the next N status polls fail, simulating the app
 	// restarting mid-build.
 	failStatusPolls int
+	// stages and log answer the stages and log actions.
+	stages []gateway.Stage
+	log    *gateway.BuildLog
+	logErr string
+	// silent lists actions the fake closes the connection on without
+	// answering — what an app predating those actions does.
+	silent map[gateway.Action]bool
+	// last is the most recent request, for asserting what was sent.
+	last gateway.Request
 }
 
 func (f *fakeGateway) handle(request gateway.Request) gateway.Response {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
+	f.last = request
 	response := gateway.Response{Version: gateway.ProtocolVersion, ID: request.ID, OK: true}
 	switch request.Action {
+	case gateway.ActionStages:
+		operation := f.states[len(f.states)-1]
+		response.Operation = &operation
+		response.Stages = f.stages
+		complete := true
+		response.StagesComplete = &complete
+	case gateway.ActionLog:
+		if f.logErr != "" {
+			return gateway.Response{Version: gateway.ProtocolVersion, ID: request.ID, Error: f.logErr}
+		}
+		response.Log = f.log
 	case gateway.ActionListConfigurations:
 		response.Configurations = f.configs
 	case gateway.ActionTrigger:
@@ -60,6 +81,12 @@ func (f *fakeGateway) handle(request gateway.Request) gateway.Response {
 		response.Operation = &operation
 	}
 	return response
+}
+
+func (f *fakeGateway) lastRequest() gateway.Request {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	return f.last
 }
 
 func (f *fakeGateway) pollCount() int {
@@ -100,6 +127,9 @@ func (f *fakeGateway) start(t *testing.T) Options {
 				}
 				var request gateway.Request
 				if json.Unmarshal(line, &request) != nil {
+					return
+				}
+				if f.silent[request.Action] {
 					return
 				}
 				payload, _ := json.Marshal(f.handle(request))

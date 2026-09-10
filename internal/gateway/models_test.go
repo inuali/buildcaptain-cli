@@ -90,3 +90,46 @@ func TestFormatJSONSortsKeys(t *testing.T) {
 		t.Errorf("FormatJSON:\n got %s\nwant %s", text, want)
 	}
 }
+
+// The log request's extra fields must reach the app under the names its
+// decoder expects, and stay absent when unused.
+func TestLogRequestGoldenJSON(t *testing.T) {
+	lines := 200
+	request := Request{
+		Version:     ProtocolVersion,
+		ID:          "11111111-2222-3333-4444-555555555555",
+		Action:      ActionLog,
+		OperationID: "1A2B3C4D-5E6F-4A8B-9C0D-1E2F3A4B5C6D",
+		Stage:       "Tests",
+		Lines:       &lines,
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"version":1,"id":"11111111-2222-3333-4444-555555555555","action":"log",` +
+		`"operationID":"1A2B3C4D-5E6F-4A8B-9C0D-1E2F3A4B5C6D","stage":"Tests","lines":200}`
+	if string(data) != want {
+		t.Errorf("request JSON:\n got %s\nwant %s", data, want)
+	}
+}
+
+func TestStagesResponseDecodes(t *testing.T) {
+	raw := `{"version":1,"id":"X","ok":true,"stagesComplete":true,"stages":[` +
+		`{"id":"6","name":"Build","status":"success","startedAt":"2026-09-10T08:00:00Z","duration":12.5},` +
+		`{"id":"9","name":"Tests","status":"failure","parent":"6"}]}`
+	var response Response
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Stages) != 2 || response.StagesComplete == nil || !*response.StagesComplete {
+		t.Fatalf("response = %+v", response)
+	}
+	build := response.Stages[0]
+	if build.Status != "success" || build.Duration == nil || *build.Duration != 12.5 || build.StartedAt.ISO8601() != "2026-09-10T08:00:00Z" {
+		t.Errorf("build stage = %+v", build)
+	}
+	if tests := response.Stages[1]; tests.Parent != "6" || tests.Duration != nil {
+		t.Errorf("tests stage = %+v", tests)
+	}
+}

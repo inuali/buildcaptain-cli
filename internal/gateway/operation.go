@@ -153,3 +153,20 @@ type PublicInput struct {
 	AllowedValues []string `json:"allowedValues"`
 	Pattern       *string  `json:"pattern"`
 }
+
+// Stage mirrors AgentPublicStage: one node of the flattened pipeline graph.
+type Stage struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Status    string   `json:"status"`
+	StartedAt Time     `json:"startedAt"`
+	Duration  *float64 `json:"duration"`
+	Parent    string   `json:"parent"`
+}
+
+// BuildLog mirrors AgentBuildLog.
+type BuildLog struct {
+	Stage     *Stage `json:"stage"`
+	Text      string `json:"text"`
+	Truncated bool   `json:"truncated"`
+}

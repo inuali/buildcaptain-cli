@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -35,6 +36,7 @@ Usage:
   buildcaptain run <configuration> [flags]   Start a build and wait for it to finish
   buildcaptain wait [<run-id>]               Block on a running build until it finishes
   buildcaptain status [<run-id>]             Report on a run once and return
+  buildcaptain logs [<run-id>] [flags]       Print a run's console output
   buildcaptain mcp                           Serve the gateway to AI agents over MCP
   buildcaptain version
 
@@ -46,13 +48,20 @@ Flags for run and wait:
   --timeout DURATION   Give up waiting after this long (default 30m, 0 waits forever)
   --quiet              Do not print progress to stderr
 
-Flags for configs, run, wait, and status:
+Flags for logs:
+  --stage NAME         Only this stage's output (a name or id from "stages")
+  --tail N             Only the last N lines
+
+Flags for every command but mcp and version:
   --verbose            Include the raw gateway response under "raw"
 
 Run IDs look like run_1a2b3c4d…; every command that touches a run prints one.
 Any unambiguous prefix of at least 6 characters works: buildcaptain wait run_1a2b3c.
 Omitting the run ID uses the most recent run started from this Mac — convenient,
 but ambiguous when several are in flight, so keep the ID when it matters.
+
+run, wait, and status list the build's stages with their own status once Jenkins
+has started it; each stage carries the exact logs command that prints its output.
 
 Exit codes:
   0  the request succeeded; a finished build succeeded
@@ -155,6 +164,25 @@ func run(arguments []string) int {
 			Verbose:      flags.verbose,
 		}, first(positional)))
 
+	case "logs":
+		flags, positional, err := parseFlags(rest, policyLogs)
+		if err != nil {
+			return fail(err.Error(), "")
+		}
+		if len(positional) > 1 {
+			return fail("Usage: buildcaptain logs [<run-id>] [--stage NAME] [--tail N]", "")
+		}
+		return report(runner.Logs(context.Background(), runner.LogsOptions{
+			Options: runner.Options{
+				WorkspaceDir: workspaceDir,
+				Caller:       cliCaller,
+				Verbose:      flags.verbose,
+			},
+			RunID: first(positional),
+			Stage: flags.stage,
+			Lines: flags.tail,
+		}))
+
 	case "version":
 		fmt.Println(version)
 		return runner.ExitOK
@@ -174,6 +202,8 @@ type flagSet struct {
 	timeout time.Duration
 	quiet   bool
 	verbose bool
+	stage   string
+	tail    int
 }
 
 // flagPolicy says which of the CLI's flags a command accepts, so a flag used
@@ -183,11 +213,14 @@ type flagPolicy struct {
 	starting bool
 	// waiting covers the flags that shape how a command follows a build.
 	waiting bool
+	// logs covers the flags that narrow which console output is printed.
+	logs bool
 }
 
 var (
 	policyRun     = flagPolicy{starting: true, waiting: true}
 	policyWait    = flagPolicy{waiting: true}
+	policyLogs    = flagPolicy{logs: true}
 	policyReading = flagPolicy{}
 )
 
@@ -200,10 +233,14 @@ func parseFlags(arguments []string, policy flagPolicy) (flagSet, []string, error
 		if allowed {
 			return nil
 		}
-		if flag == "--input" || flag == "--no-wait" {
+		switch flag {
+		case "--input", "--no-wait":
 			return fmt.Errorf("%s only applies to buildcaptain run.", flag)
+		case "--stage", "--tail":
+			return fmt.Errorf("%s only applies to buildcaptain logs.", flag)
+		default:
+			return fmt.Errorf("%s only applies to buildcaptain run and buildcaptain wait.", flag)
 		}
-		return fmt.Errorf("%s only applies to buildcaptain run and buildcaptain wait.", flag)
 	}
 
 	for index := 0; index < len(arguments); index++ {
@@ -265,6 +302,28 @@ func parseFlags(arguments []string, policy flagPolicy) (flagSet, []string, error
 				return flags, nil, fmt.Errorf("Inputs use --input NAME=VALUE; got %q.", raw)
 			}
 			flags.inputs[name] = inputValue
+		case "--stage":
+			if err := refuse(argument, policy.logs); err != nil {
+				return flags, nil, err
+			}
+			raw, err := next("--stage")
+			if err != nil {
+				return flags, nil, err
+			}
+			flags.stage = raw
+		case "--tail":
+			if err := refuse(argument, policy.logs); err != nil {
+				return flags, nil, err
+			}
+			raw, err := next("--tail")
+			if err != nil {
+				return flags, nil, err
+			}
+			lines, err := strconv.Atoi(raw)
+			if err != nil || lines <= 0 {
+				return flags, nil, fmt.Errorf("--tail takes a positive number of lines; got %q.", raw)
+			}
+			flags.tail = lines
 		default:
 			if strings.HasPrefix(argument, "-") {
 				return flags, nil, fmt.Errorf("%q is not a known flag.", argument)

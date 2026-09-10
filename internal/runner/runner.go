@@ -1,5 +1,5 @@
-// Package runner performs the CLI's three real operations — list, trigger,
-// status — and turns each into the printed shape. Both the command line and
+// Package runner performs the CLI's real operations — list, trigger, status,
+// logs — and turns each into the printed shape. Both the command line and
 // the MCP server go through here so an agent sees the same result whichever
 // way it reached BuildCaptain.
 package runner
@@ -78,6 +78,18 @@ type WaitOptions struct {
 	Progress func(*gateway.Operation)
 }
 
+// LogsOptions describes one request for console output.
+type LogsOptions struct {
+	Options
+	// RunID may be any accepted spelling, or empty for the most recent run.
+	RunID string
+	// Stage is a stage name or id; empty asks for the whole build's console.
+	Stage string
+	// Lines keeps only that many lines from the end; 0 keeps everything the
+	// app's size cap allows.
+	Lines int
+}
+
 // followSpec is the part of a request the wait loop needs, shared by the
 // commands that start a build and the ones that only watch it.
 type followSpec struct {
@@ -137,7 +149,7 @@ func Trigger(ctx context.Context, options TriggerOptions) Result {
 	if lostContact {
 		return lostContactResult(operation)
 	}
-	return runResult(operation, response, options.Verbose, timedOut)
+	return runResult(operation, response, options.Options, timedOut)
 }
 
 // Wait follows a run that is already under way to a terminal state. It is the
@@ -171,7 +183,7 @@ func Wait(ctx context.Context, options WaitOptions) Result {
 	if lostContact {
 		return lostContactResult(operation)
 	}
-	return runResult(operation, response, options.Verbose, timedOut)
+	return runResult(operation, response, options.Options, timedOut)
 }
 
 // lostContactResult reports a wait that ran out of patience with a missing
@@ -200,7 +212,34 @@ func Status(ctx context.Context, options Options, runID string) Result {
 	if response.Operation == nil {
 		return Result{Payload: output.NewFailure("BuildCaptain returned no run for that ID.", ""), OK: false}
 	}
-	return runResult(response.Operation, response, options.Verbose, false)
+	return runResult(response.Operation, response, options, false)
+}
+
+// Logs fetches console output: the whole build's, or one stage's. An empty
+// runID means the most recent run.
+func Logs(ctx context.Context, options LogsOptions) Result {
+	operationUUID, err := runs.Resolve(options.RunID)
+	if err != nil {
+		return Result{Payload: output.NewFailure(err.Error(), ""), OK: false}
+	}
+	params := gateway.SendParams{Action: gateway.ActionLog, OperationID: operationUUID, Stage: options.Stage}
+	if options.Lines > 0 {
+		lines := options.Lines
+		params.Lines = &lines
+	}
+	response := send(options.Options, params)
+	if !response.OK {
+		return failure(response, options.Verbose,
+			"Check the run with buildcaptain status; its stages list the exact logs command for each stage.")
+	}
+	if response.Log == nil {
+		return Result{Payload: output.NewFailure("BuildCaptain returned no log for that run.", ""), OK: false}
+	}
+	payload := output.NewLog(operationUUID, response.Log)
+	if options.Verbose {
+		payload.Raw = rawOf(response)
+	}
+	return Result{Payload: payload, OK: true}
 }
 
 // follow polls until the operation stops moving, the deadline passes, contact
@@ -272,15 +311,35 @@ func follow(
 func runResult(
 	operation *gateway.Operation,
 	response gateway.Response,
-	verbose bool,
+	options Options,
 	timedOut bool,
 ) Result {
 	payload := output.NewRun(operation)
 	payload.TimedOut = timedOut
-	if verbose {
+	// One extra round trip per command, not per poll: the stage graph is
+	// worth reading once the answer is being printed, not while waiting.
+	if operation.RunID != nil {
+		payload.Stages, payload.StagesUnavailable = stagesOf(options, operation)
+	}
+	if options.Verbose {
 		payload.Raw = rawOf(response)
 	}
 	return Result{Payload: payload, OK: true, TimedOut: timedOut, Operation: operation}
+}
+
+// stagesOf reads the stage graph for a started build. Failing to get it must
+// not fail the command — the build's own result is already known — so the
+// reason travels alongside the (missing) list instead.
+func stagesOf(options Options, operation *gateway.Operation) ([]output.Stage, string) {
+	response := send(options, gateway.SendParams{Action: gateway.ActionStages, OperationID: operation.ID})
+	if !response.OK {
+		message := response.Error
+		if message == "" {
+			message = "BuildCaptain did not report the stages."
+		}
+		return nil, message
+	}
+	return output.NewStages(operation.ID, response.Stages), ""
 }
 
 func failure(response gateway.Response, verbose bool, hint string) Result {

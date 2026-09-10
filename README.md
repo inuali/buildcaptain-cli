@@ -33,9 +33,11 @@ claude mcp add buildcaptain -- buildcaptain mcp
 codex mcp add buildcaptain -- buildcaptain mcp
 ```
 
-This exposes three tools: `list_run_configurations`, `trigger_run`, `get_run_status`. Run configurations restricted to a Git repository are matched against the current working directory's `origin` remote; configurations marked "Any repository" in the app are always available.
+This exposes four tools: `list_run_configurations`, `trigger_run`, `get_run_status`, `get_run_logs`. Run configurations restricted to a Git repository are matched against the current working directory's `origin` remote; configurations marked "Any repository" in the app are always available.
 
 `trigger_run` waits for the build to finish and reports the result, so a single tool call is usually the whole interaction. If it comes back with `"timed_out": true` the build is still going — pass the `run_id` from the result to `get_run_status`, adding `"wait_seconds"` to block until it finishes instead of polling in a loop. Pass `"wait": false` to `trigger_run` to return as soon as the build is accepted.
+
+Once Jenkins has started the build, every result lists its `stages` with their own status, so a failed build says which stage broke. `get_run_logs` then reads that stage's console output (pass its `name`), or the whole build's when no stage is given; it returns the last 200 lines unless `tail_lines` says otherwise.
 
 ## Manual use
 
@@ -45,10 +47,12 @@ buildcaptain run deploy-staging             # start it and wait for the result
 buildcaptain run deploy-staging --no-wait   # start it and print a run ID to poll
 buildcaptain wait run_1a2b3c                # block on a running build until it finishes
 buildcaptain status run_1a2b3c              # report on it once and return
+buildcaptain logs run_1a2b3c                # the build's console output
+buildcaptain logs run_1a2b3c --stage Tests  # one stage's output
 buildcaptain version
 ```
 
-`wait` and `status` both default to the most recent run when you omit the ID.
+`wait`, `status`, and `logs` all default to the most recent run when you omit the ID.
 
 Supply inputs with `--input NAME=VALUE`, once per input. `buildcaptain configs` prints the exact `run` command for each configuration, placeholders included.
 
@@ -65,6 +69,27 @@ run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d
 Any unambiguous prefix of at least six characters works, as with Git commits — `buildcaptain status run_1a2b3c`. Omitting it entirely uses the most recent run started from this Mac; that is a convenience, not a guarantee, so keep the ID when several builds may be in flight. The answer always names the run it came from in `run_id`.
 
 The values under `jenkins` (`queue_id`, `build_number`, and their URLs) are links for people. They are not accepted by `wait` or `status`.
+
+### Stages and logs
+
+Once Jenkins has started the build, `run`, `wait`, and `status` list its stages, each with its own status, duration, and the exact command that prints its console output:
+
+```json
+"stages": [
+  { "id": "6", "name": "Build", "status": "success", "duration_seconds": 41.2,
+    "logs": "buildcaptain logs run_1a2b3c4d… --stage Build" },
+  { "id": "9", "name": "Tests", "status": "failure", "duration_seconds": 12.5,
+    "logs": "buildcaptain logs run_1a2b3c4d… --stage Tests" }
+]
+```
+
+Parallel branches and nested stages carry a `parent` id. `logs` prints the whole build's console by default; `--stage` narrows it to one stage by name or id, and `--tail N` keeps only the last N lines. The app caps a log at 2 MiB from the end and sets `"truncated": true` when it cut anything; the full log stays a click away at `jenkins.build_url`.
+
+```sh
+buildcaptain logs run_1a2b3c --stage Tests --tail 100
+```
+
+Stages and logs need BuildCaptain 26.9 or newer; with an older app the run result says so under `stages_unavailable` and `logs` fails with the same message.
 
 ### Running under a short command timeout
 
@@ -85,7 +110,7 @@ buildcaptain wait run_1a2b3c --timeout 90s      # resume, as often as needed
 
 ### Output
 
-The operational commands (`configs`, `run`, `wait`, and `status`) print exactly one JSON document on stdout — the result, or `{"ok": false, "error": ...}` — so they can be parsed without filtering. `version` prints the version string, while `mcp` uses the MCP stdio protocol. Progress lines from `run` and `wait` go to stderr; `--quiet` suppresses them. `--verbose` adds the raw gateway response under `raw` for the operational commands.
+The operational commands (`configs`, `run`, `wait`, `status`, and `logs`) print exactly one JSON document on stdout — the result, or `{"ok": false, "error": ...}` — so they can be parsed without filtering. `version` prints the version string, while `mcp` uses the MCP stdio protocol. Progress lines from `run` and `wait` go to stderr; `--quiet` suppresses them. `logs` prints the text as a JSON string under `text`, so pipe it through `jq -r .text` to read it raw. `--verbose` adds the raw gateway response under `raw` for the operational commands.
 
 ### Exit codes
 

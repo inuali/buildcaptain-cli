@@ -19,6 +19,10 @@ const (
 	ActionListConfigurations Action = "listConfigurations"
 	ActionTrigger            Action = "trigger"
 	ActionStatus             Action = "status"
+	// ActionStages and ActionLog need an app that knows them; an older app
+	// closes the connection without answering, which Send reports as such.
+	ActionStages Action = "stages"
+	ActionLog    Action = "log"
 )
 
 // WorkspaceContext mirrors AgentWorkspaceContext. Swift's synthesized Codable
@@ -39,6 +43,10 @@ type Request struct {
 	ConfigurationID string            `json:"configurationID,omitempty"`
 	Inputs          map[string]string `json:"inputs,omitempty"`
 	OperationID     string            `json:"operationID,omitempty"`
+	// Stage names or identifies the stage whose log is wanted; empty means
+	// the whole build. Lines keeps only that many from the end; nil keeps all.
+	Stage string `json:"stage,omitempty"`
+	Lines *int   `json:"lines,omitempty"`
 }
 
 // Response mirrors AgentGatewayResponse. Version and ID are transport
@@ -51,6 +59,9 @@ type Response struct {
 	Error          string                `json:"error,omitempty"`
 	Configurations []PublicConfiguration `json:"configurations,omitempty"`
 	Operation      *Operation            `json:"operation,omitempty"`
+	Stages         []Stage               `json:"stages,omitempty"`
+	StagesComplete *bool                 `json:"stagesComplete,omitempty"`
+	Log            *BuildLog             `json:"log,omitempty"`
 
 	// Raw is the exact response line, kept for --verbose so the wire form
 	// stays inspectable after the CLI has reshaped it.

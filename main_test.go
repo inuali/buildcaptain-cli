@@ -93,6 +93,31 @@ func TestFlagsAreRefusedOnCommandsThatIgnoreThem(t *testing.T) {
 	}
 }
 
+func TestParseLogsFlags(t *testing.T) {
+	flags, positional, err := parseFlags([]string{"run_1a2b3c", "--stage", "Unit tests", "--tail=50"}, policyLogs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(positional) != 1 || positional[0] != "run_1a2b3c" {
+		t.Errorf("positional = %v", positional)
+	}
+	if flags.stage != "Unit tests" || flags.tail != 50 {
+		t.Errorf("flags = %+v", flags)
+	}
+	for _, arguments := range [][]string{{"--tail", "0"}, {"--tail", "many"}, {"--stage"}} {
+		if _, _, err := parseFlags(arguments, policyLogs); err == nil {
+			t.Errorf("parseFlags(%v) should have failed", arguments)
+		}
+	}
+	// The log flags mean nothing on the other commands, and say so.
+	for _, policy := range []flagPolicy{policyRun, policyWait, policyReading} {
+		_, _, err := parseFlags([]string{"--stage", "Build"}, policy)
+		if err == nil || !strings.Contains(err.Error(), "only applies to buildcaptain logs.") {
+			t.Errorf("--stage under %+v: %v", policy, err)
+		}
+	}
+}
+
 func TestFlagErrorsAreSpecific(t *testing.T) {
 	cases := [][]string{
 		{"--bogus"},

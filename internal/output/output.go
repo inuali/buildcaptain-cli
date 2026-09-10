@@ -30,7 +30,15 @@ type Run struct {
 	RequestedAt   string            `json:"requested_at,omitempty"`
 	UpdatedAt     string            `json:"updated_at,omitempty"`
 	Jenkins       *Jenkins          `json:"jenkins,omitempty"`
-	TimedOut      bool              `json:"timed_out,omitempty"`
+	// Stages lists the pipeline's stages with their own status, so a caller
+	// sees where a build failed. Present once Jenkins has started the build.
+	Stages []Stage `json:"stages,omitempty"`
+	// StagesUnavailable explains a missing stage list for a started build,
+	// such as an app too old to report one.
+	StagesUnavailable string `json:"stages_unavailable,omitempty"`
+	// Logs is the command that prints the whole build's console output.
+	Logs     string `json:"logs,omitempty"`
+	TimedOut bool   `json:"timed_out,omitempty"`
 	// Poll and Wait are the literal commands that continue from here, present
 	// only while the run can still change: Poll checks once and returns, Wait
 	// blocks until there is an answer. Callers copy a command far more
@@ -48,6 +56,32 @@ type Jenkins struct {
 	QueueURL    string `json:"queue_url,omitempty"`
 	BuildNumber *int   `json:"build_number,omitempty"`
 	BuildURL    string `json:"build_url,omitempty"`
+}
+
+// Stage is one pipeline stage. Nested stages and parallel branches name
+// their parent so the flat list still reads as a tree.
+type Stage struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Status          string   `json:"status"`
+	StartedAt       string   `json:"started_at,omitempty"`
+	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
+	Parent          string   `json:"parent,omitempty"`
+	// Logs is the command that prints this stage's console output.
+	Logs string `json:"logs"`
+}
+
+// Log is what `logs` prints.
+type Log struct {
+	OK    bool   `json:"ok"`
+	RunID string `json:"run_id"`
+	// Stage is set when the text belongs to one stage; absent for the
+	// whole build's console.
+	Stage *Stage `json:"stage,omitempty"`
+	// Truncated says the start was cut, by --tail or by the app's size cap.
+	Truncated bool            `json:"truncated"`
+	Text      string          `json:"text"`
+	Raw       json.RawMessage `json:"raw,omitempty"`
 }
 
 // Configs is what `configs` prints.
@@ -115,7 +149,63 @@ func NewRun(operation *gateway.Operation) Run {
 	if jenkins := newJenkins(operation); jenkins != nil {
 		run.Jenkins = jenkins
 	}
+	if operation.RunID != nil {
+		run.Logs = LogsCommand(operation.ID, "")
+	}
 	return run
+}
+
+// NewStages projects the gateway's flattened stage graph.
+func NewStages(operationID string, stages []gateway.Stage) []Stage {
+	if len(stages) == 0 {
+		return nil
+	}
+	list := make([]Stage, 0, len(stages))
+	for _, stage := range stages {
+		list = append(list, newStage(operationID, stage))
+	}
+	return list
+}
+
+func newStage(operationID string, stage gateway.Stage) Stage {
+	return Stage{
+		ID:              stage.ID,
+		Name:            stage.Name,
+		Status:          stage.Status,
+		StartedAt:       stage.StartedAt.ISO8601(),
+		DurationSeconds: stage.Duration,
+		Parent:          stage.Parent,
+		Logs:            LogsCommand(operationID, stage.Name),
+	}
+}
+
+// NewLog projects a log response. stageQuery is what the caller asked for;
+// the app resolves it, so the answer names the stage it actually matched.
+func NewLog(operationID string, log *gateway.BuildLog) Log {
+	result := Log{OK: true, RunID: runs.Format(operationID), Truncated: log.Truncated, Text: log.Text}
+	if log.Stage != nil {
+		stage := newStage(operationID, *log.Stage)
+		result.Stage = &stage
+	}
+	return result
+}
+
+// LogsCommand prints a run's console output, or one stage's when named.
+func LogsCommand(operationID, stage string) string {
+	command := "buildcaptain logs " + runs.Format(operationID)
+	if stage != "" {
+		command += " --stage " + shellQuote(stage)
+	}
+	return command
+}
+
+// shellQuote wraps a value for copy-and-paste into a shell when it needs it;
+// stage names routinely carry spaces.
+func shellQuote(value string) string {
+	if value != "" && !strings.ContainsAny(value, " \t\n'\"\\$`!&|;<>()*?[]#~") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func newJenkins(operation *gateway.Operation) *Jenkins {

@@ -16,6 +16,10 @@ import (
 
 const caller = "MCP agent"
 
+// defaultTailLines bounds get_run_logs when the agent does not say: enough to
+// see why a stage failed, small enough not to flood the context window.
+const defaultTailLines = 200
+
 // defaultWaitSeconds is shorter than the CLI's 30 minutes: MCP clients have
 // their own request timeouts, and a wait that ends without an answer is worse
 // than one that hands back a run ID to poll with.
@@ -31,7 +35,11 @@ trigger_run waits for the build to finish and reports the result. If it returns
 "timed_out": true the build is still going — call get_run_status with the "run_id"
 from the result, adding "wait_seconds" to block until it finishes rather than
 polling in a loop. That run_id is the only identifier you ever pass back; the
-values under "jenkins" are links for people, not handles for these tools.`
+values under "jenkins" are links for people, not handles for these tools.
+
+A started build's result carries "stages", each with its own status, so a failed
+build shows which stage broke. Call get_run_logs with that stage's "name" to read
+its console output; omit the stage for the whole build's console.`
 
 type triggerInput struct {
 	Configuration string            `json:"configuration" jsonschema:"The configuration field from list_run_configurations"`
@@ -54,6 +62,12 @@ type statusInput struct {
 
 	// OperationID is the pre-1.0 name for RunID, accepted for the same reason.
 	OperationID string `json:"operation_id,omitempty" jsonschema:"Deprecated alias for run_id"`
+}
+
+type logsInput struct {
+	RunID string `json:"run_id,omitempty" jsonschema:"The run_id returned by trigger_run; omit for the most recent run"`
+	Stage string `json:"stage,omitempty" jsonschema:"A stage name or id from the run's stages list; omit for the whole build's console output"`
+	Tail  int    `json:"tail_lines,omitempty" jsonschema:"Only the last N lines (default 200; -1 keeps everything the app allows)"`
 }
 
 // Run serves MCP over stdio until the client disconnects. workspaceDir is the
@@ -133,6 +147,30 @@ func Run(ctx context.Context, version, workspaceDir string) error {
 				}))
 			}
 			return result(runner.Status(ctx, options, runID))
+		},
+	)
+
+	mcp.AddTool(server,
+		&mcp.Tool{
+			Name: "get_run_logs",
+			Description: "Read the console output of a run started by trigger_run: the whole " +
+				"build's, or one stage's when stage is given. Omit run_id for the most recent run. " +
+				"Returns the last tail_lines lines (default 200) and whether earlier output was cut.",
+		},
+		func(ctx context.Context, request *mcp.CallToolRequest, input logsInput) (*mcp.CallToolResult, any, error) {
+			tail := input.Tail
+			if tail == 0 {
+				tail = defaultTailLines
+			}
+			if tail < 0 {
+				tail = 0
+			}
+			return result(runner.Logs(ctx, runner.LogsOptions{
+				Options: options,
+				RunID:   input.RunID,
+				Stage:   input.Stage,
+				Lines:   tail,
+			}))
 		},
 	)
 
