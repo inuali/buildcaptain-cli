@@ -77,9 +77,9 @@ Once Jenkins has started the build, `run`, `wait`, and `status` list its stages,
 ```json
 "stages": [
   { "id": "6", "name": "Build", "status": "success", "duration_seconds": 41.2,
-    "logs": "buildcaptain logs run_1a2b3c4d… --stage Build" },
+    "logs": "buildcaptain logs run_1a2b3c4d… --stage 6" },
   { "id": "9", "name": "Tests", "status": "failure", "duration_seconds": 12.5,
-    "logs": "buildcaptain logs run_1a2b3c4d… --stage Tests" }
+    "logs": "buildcaptain logs run_1a2b3c4d… --stage 9" }
 ]
 ```
 

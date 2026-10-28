@@ -53,7 +53,7 @@ func TestStatusByRunURLReadsLikeAnAgentRun(t *testing.T) {
 	if payload.Logs != "buildcaptain logs "+runURL {
 		t.Errorf("logs command = %q", payload.Logs)
 	}
-	if len(payload.Stages) != 3 || payload.Stages[2].Logs != "buildcaptain logs "+runURL+" --stage 'Unit tests'" {
+	if len(payload.Stages) != 3 || payload.Stages[2].Logs != "buildcaptain logs "+runURL+" --stage 12" {
 		t.Errorf("stages = %+v", payload.Stages)
 	}
 	for _, request := range fake.allRequests() {
@@ -104,7 +104,7 @@ func TestLogsByRunURL(t *testing.T) {
 		t.Fatalf("payload = %#v", result.Payload)
 	}
 	if payload.RunID != runURL || payload.Text != "boom\n" || payload.Stage == nil ||
-		payload.Stage.Logs != "buildcaptain logs "+runURL+" --stage Tests" {
+		payload.Stage.Logs != "buildcaptain logs "+runURL+" --stage 9" {
 		t.Errorf("payload = %+v", payload)
 	}
 	last := fake.lastRequest()

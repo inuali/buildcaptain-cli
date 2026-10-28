@@ -48,10 +48,10 @@ func TestStatusListsStagesWithLogsCommands(t *testing.T) {
 	if tests.Name != "Tests" || tests.Status != "failure" || tests.DurationSeconds == nil || *tests.DurationSeconds != 12.5 {
 		t.Errorf("stage = %+v", tests)
 	}
-	if tests.Logs != "buildcaptain logs run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d --stage Tests" {
+	if tests.Logs != "buildcaptain logs run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d --stage 9" {
 		t.Errorf("logs command = %q", tests.Logs)
 	}
-	if nested := payload.Stages[2]; nested.Parent != "9" || nested.Logs != "buildcaptain logs run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d --stage 'Unit tests'" {
+	if nested := payload.Stages[2]; nested.Parent != "9" || nested.Logs != "buildcaptain logs run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d --stage 12" {
 		t.Errorf("nested stage = %+v", nested)
 	}
 	if payload.Logs != "buildcaptain logs run_1a2b3c4d5e6f4a8b9c0d1e2f3a4b5c6d" {

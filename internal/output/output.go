@@ -185,7 +185,9 @@ func newStage(handle string, stage gateway.Stage) Stage {
 		StartedAt:       stage.StartedAt.ISO8601(),
 		DurationSeconds: stage.Duration,
 		Parent:          stage.Parent,
-		Logs:            LogsCommand(handle, stage.Name),
+		// The id, not the name: parallel branches often repeat stage names
+		// ("build image" in each), and a name would then be ambiguous.
+		Logs: LogsCommand(handle, stage.ID),
 	}
 }
 
