@@ -133,3 +133,74 @@ func TestStagesResponseDecodes(t *testing.T) {
 		t.Errorf("tests stage = %+v", tests)
 	}
 }
+
+// runURL must reach the app under the name AgentGatewayRequest decodes.
+func TestRunURLRequestGoldenJSON(t *testing.T) {
+	request := Request{
+		Version: ProtocolVersion,
+		ID:      "11111111-2222-3333-4444-555555555555",
+		Action:  ActionStatus,
+		RunURL:  "https://jenkins.example.com/job/jobfoto-teams/job/main/481/",
+	}
+	data, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"version":1,"id":"11111111-2222-3333-4444-555555555555","action":"status",` +
+		`"runURL":"https://jenkins.example.com/job/jobfoto-teams/job/main/481/"}`
+	if string(data) != want {
+		t.Errorf("request JSON:\n got %s\nwant %s", data, want)
+	}
+	empty, _ := json.Marshal(Request{Version: ProtocolVersion, ID: "X", Action: ActionStatus, OperationID: "Y"})
+	if regexp.MustCompile("runURL").Match(empty) {
+		t.Errorf("empty runURL should be omitted, got %s", empty)
+	}
+}
+
+// The app's answer to a status request by run URL, as AgentGatewayResponse
+// encodes it.
+func TestRunReportDecodesAndReadsAsAnOperation(t *testing.T) {
+	payload := `{"version":1,"id":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","ok":true,` +
+		`"run":{"configurationKey":"jobfoto-deploy","configurationName":"Jobfoto deploy",` +
+		`"job":"jobfoto-teams » main","number":481,"result":"success","state":"completed",` +
+		`"url":"https://jenkins.example.com/job/jobfoto-teams/job/main/481/"}}`
+	var response Response
+	if err := json.Unmarshal([]byte(payload), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Run == nil || response.Operation != nil {
+		t.Fatalf("response = %+v", response)
+	}
+	operation := response.Run.Operation()
+	if operation.RunURL != "https://jenkins.example.com/job/jobfoto-teams/job/main/481/" || operation.ID != "" {
+		t.Errorf("operation handle = %q / %q", operation.RunURL, operation.ID)
+	}
+	if operation.IsActive() || !operation.Succeeded() {
+		t.Errorf("a completed success should be finished and successful: %+v", operation)
+	}
+	if operation.RunID == nil || operation.RunID.Number != 481 || operation.ResolvedJob.FullDisplayName != "jobfoto-teams » main" {
+		t.Errorf("operation = %+v", operation)
+	}
+	if operation.ConfigurationKey != "jobfoto-deploy" || operation.StateDescription() != "completed (success)" {
+		t.Errorf("operation = %+v", operation)
+	}
+}
+
+func TestOldAppNotFoundIsExplainedOnlyForRunURLs(t *testing.T) {
+	notFound := Response{Version: ProtocolVersion, ID: "X", Error: "Agent build operation not found."}
+	byURL := Request{ID: "X", Action: ActionStatus, RunURL: "https://jenkins.example.com/job/x/1/"}
+	if got := explainOldApp(byURL, notFound); got.Error != runURLNeedsNewerApp || got.OK {
+		t.Errorf("run URL on old app = %+v", got)
+	}
+	byID := Request{ID: "X", Action: ActionStatus, OperationID: "Y"}
+	if got := explainOldApp(byID, notFound); got.Error != "Agent build operation not found." {
+		t.Errorf("operation ID not found must stay as is, got %+v", got)
+	}
+	refusal := Response{Version: ProtocolVersion, ID: "X", Error: "This run URL is not on the Jenkins server BuildCaptain is connected to."}
+	if got := explainOldApp(byURL, refusal); got.Error != refusal.Error {
+		t.Errorf("a new app's refusal must stay as is, got %+v", got)
+	}
+	if got := unansweredResponse(Request{ID: "X", Action: ActionLog, RunURL: byURL.RunURL}); got.Error != runURLNeedsNewerApp {
+		t.Errorf("silent close on a run URL = %+v", got)
+	}
+}

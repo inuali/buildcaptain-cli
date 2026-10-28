@@ -162,3 +162,39 @@ func TestRecentToleratesUnusableStore(t *testing.T) {
 		t.Fatalf("Recent() = %v", entries)
 	}
 }
+
+func TestIsURLRecognizesRunURLs(t *testing.T) {
+	for value, want := range map[string]bool{
+		"https://jenkins.example.com/job/x/1/": true,
+		"  HTTP://10.0.0.5/job/x/1/":           true,
+		"run_1a2b3c":                           false,
+		"jenkins.example.com/job/x/1/":         false,
+		"":                                     false,
+	} {
+		if got := IsURL(value); got != want {
+			t.Errorf("IsURL(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestParseURLKeepsTheURLAndRejectsWhatCouldNeverPass(t *testing.T) {
+	const good = "https://jenkins.example.com/job/jobfoto-teams/job/main/481/"
+	if got, err := ParseURL("  " + good + "\n"); err != nil || got != good {
+		t.Errorf("ParseURL(good) = %q, %v", got, err)
+	}
+	for _, bad := range []string{
+		"https://",
+		"https:///job/x/1/",
+		good + "?x=1",
+		good + "?",
+		good + "#frag",
+		"https://user@jenkins.example.com/job/x/1/",
+		"https://jenkins.example.com/job/a b/1/",
+		"https://jenkins.example.com/job/a\\b/1/",
+		"http:opaque",
+	} {
+		if _, err := ParseURL(bad); err == nil || !strings.Contains(err.Error(), "is not a Jenkins run URL") {
+			t.Errorf("ParseURL(%q) error = %v", bad, err)
+		}
+	}
+}

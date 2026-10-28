@@ -156,19 +156,15 @@ func Trigger(ctx context.Context, options TriggerOptions) Result {
 // resumable half of Trigger: same waiting, same exit codes, but reached from a
 // run ID rather than from starting the build.
 func Wait(ctx context.Context, options WaitOptions) Result {
-	operationUUID, err := runs.Resolve(options.RunID)
+	target, err := resolveTarget(options.RunID)
 	if err != nil {
 		return Result{Payload: output.NewFailure(err.Error(), ""), OK: false}
 	}
-	response := send(options.Options, gateway.SendParams{
-		Action:      gateway.ActionStatus,
-		OperationID: operationUUID,
-	})
+	response := send(options.Options, target.params(gateway.ActionStatus))
 	if !response.OK {
-		return failure(response, options.Verbose,
-			"BuildCaptain only keeps recent runs. Start a new one with buildcaptain run <configuration>.")
+		return failure(response, options.Verbose, target.statusHint())
 	}
-	operation := response.Operation
+	operation := operationOf(response)
 	if operation == nil {
 		return Result{Payload: output.NewFailure("BuildCaptain returned no run for that ID.", ""), OK: false}
 	}
@@ -200,29 +196,30 @@ func lostContactResult(operation *gateway.Operation) Result {
 
 // Status reports on one run. An empty runID means the most recent one.
 func Status(ctx context.Context, options Options, runID string) Result {
-	operationUUID, err := runs.Resolve(runID)
+	target, err := resolveTarget(runID)
 	if err != nil {
 		return Result{Payload: output.NewFailure(err.Error(), ""), OK: false}
 	}
-	response := send(options, gateway.SendParams{Action: gateway.ActionStatus, OperationID: operationUUID})
+	response := send(options, target.params(gateway.ActionStatus))
 	if !response.OK {
-		return failure(response, options.Verbose,
-			"BuildCaptain only keeps recent runs. Start a new one with buildcaptain run <configuration>.")
+		return failure(response, options.Verbose, target.statusHint())
 	}
-	if response.Operation == nil {
+	operation := operationOf(response)
+	if operation == nil {
 		return Result{Payload: output.NewFailure("BuildCaptain returned no run for that ID.", ""), OK: false}
 	}
-	return runResult(response.Operation, response, options, false)
+	return runResult(operation, response, options, false)
 }
 
 // Logs fetches console output: the whole build's, or one stage's. An empty
 // runID means the most recent run.
 func Logs(ctx context.Context, options LogsOptions) Result {
-	operationUUID, err := runs.Resolve(options.RunID)
+	target, err := resolveTarget(options.RunID)
 	if err != nil {
 		return Result{Payload: output.NewFailure(err.Error(), ""), OK: false}
 	}
-	params := gateway.SendParams{Action: gateway.ActionLog, OperationID: operationUUID, Stage: options.Stage}
+	params := target.params(gateway.ActionLog)
+	params.Stage = options.Stage
 	if options.Lines > 0 {
 		lines := options.Lines
 		params.Lines = &lines
@@ -235,7 +232,7 @@ func Logs(ctx context.Context, options LogsOptions) Result {
 	if response.Log == nil {
 		return Result{Payload: output.NewFailure("BuildCaptain returned no log for that run.", ""), OK: false}
 	}
-	payload := output.NewLog(operationUUID, response.Log)
+	payload := output.NewLog(target.handle(), response.Log)
 	if options.Verbose {
 		payload.Raw = rawOf(response)
 	}
@@ -278,20 +275,17 @@ func follow(
 		case <-time.After(interval):
 		}
 
-		polled := send(spec.options, gateway.SendParams{
-			Action:      gateway.ActionStatus,
-			OperationID: operation.ID,
-		})
+		polled := send(spec.options, targetOf(operation).params(gateway.ActionStatus))
 		// A failed poll is usually the app restarting or briefly busy; the
 		// build is unaffected, so keep the last known state and try again —
 		// but not forever.
-		if !polled.OK || polled.Operation == nil {
+		if current := operationOf(polled); !polled.OK || current == nil {
 			if failures++; failures >= maxConsecutivePollFailures {
 				return operation, false, true, response
 			}
 		} else {
 			failures = 0
-			operation, response = polled.Operation, polled
+			operation, response = current, polled
 			if current := operation.State + "/" + operation.Result; current != state {
 				state = current
 				if spec.progress != nil {
@@ -331,7 +325,7 @@ func runResult(
 // not fail the command — the build's own result is already known — so the
 // reason travels alongside the (missing) list instead.
 func stagesOf(options Options, operation *gateway.Operation) ([]output.Stage, string) {
-	response := send(options, gateway.SendParams{Action: gateway.ActionStages, OperationID: operation.ID})
+	response := send(options, targetOf(operation).params(gateway.ActionStages))
 	if !response.OK {
 		message := response.Error
 		if message == "" {
@@ -339,7 +333,63 @@ func stagesOf(options Options, operation *gateway.Operation) ([]output.Stage, st
 		}
 		return nil, message
 	}
-	return output.NewStages(operation.ID, response.Stages), ""
+	return output.NewStages(output.Handle(operation), response.Stages), ""
+}
+
+// target is the run a command addresses: an agent operation by its UUID, or
+// a Jenkins run by its URL. Exactly one is set.
+type target struct {
+	operationID string
+	runURL      string
+}
+
+// resolveTarget reads a user-supplied run reference: a run URL, or any
+// spelling of a run ID (empty meaning the most recent run).
+func resolveTarget(value string) (target, error) {
+	if runs.IsURL(value) {
+		runURL, err := runs.ParseURL(value)
+		return target{runURL: runURL}, err
+	}
+	operationID, err := runs.Resolve(value)
+	return target{operationID: operationID}, err
+}
+
+func targetOf(operation *gateway.Operation) target {
+	if operation.RunURL != "" {
+		return target{runURL: operation.RunURL}
+	}
+	return target{operationID: operation.ID}
+}
+
+func (t target) params(action gateway.Action) gateway.SendParams {
+	return gateway.SendParams{Action: action, OperationID: t.operationID, RunURL: t.runURL}
+}
+
+// handle is how printed commands name the run: as the caller did.
+func (t target) handle() string {
+	if t.runURL != "" {
+		return t.runURL
+	}
+	return runs.Format(t.operationID)
+}
+
+func (t target) statusHint() string {
+	if t.runURL != "" {
+		return ""
+	}
+	return "BuildCaptain only keeps recent runs. Start a new one with buildcaptain run <configuration>."
+}
+
+// operationOf reads the run a status response reports: the agent operation,
+// or a run looked up by URL in the same shape.
+func operationOf(response gateway.Response) *gateway.Operation {
+	if response.Operation != nil {
+		return response.Operation
+	}
+	if response.Run != nil {
+		return response.Run.Operation()
+	}
+	return nil
 }
 
 func failure(response gateway.Response, verbose bool, hint string) Result {

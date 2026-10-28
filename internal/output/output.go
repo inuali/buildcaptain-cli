@@ -126,7 +126,7 @@ func NewFailure(message, hint string) Failure {
 func NewRun(operation *gateway.Operation) Run {
 	run := Run{
 		OK:            true,
-		RunID:         runs.Format(operation.ID),
+		RunID:         Handle(operation),
 		State:         operation.State,
 		Result:        operation.Result,
 		Configuration: operation.ConfigurationKey,
@@ -150,24 +150,34 @@ func NewRun(operation *gateway.Operation) Run {
 		run.Jenkins = jenkins
 	}
 	if operation.RunID != nil {
-		run.Logs = LogsCommand(operation.ID, "")
+		run.Logs = LogsCommand(Handle(operation), "")
 	}
 	return run
 }
 
-// NewStages projects the gateway's flattened stage graph.
-func NewStages(operationID string, stages []gateway.Stage) []Stage {
+// Handle is what a caller passes back to name this run: the run ID for an
+// agent's run, the Jenkins run URL for a run looked up by URL.
+func Handle(operation *gateway.Operation) string {
+	if operation.RunURL != "" {
+		return operation.RunURL
+	}
+	return runs.Format(operation.ID)
+}
+
+// NewStages projects the gateway's flattened stage graph. handle names the
+// run in each stage's logs command.
+func NewStages(handle string, stages []gateway.Stage) []Stage {
 	if len(stages) == 0 {
 		return nil
 	}
 	list := make([]Stage, 0, len(stages))
 	for _, stage := range stages {
-		list = append(list, newStage(operationID, stage))
+		list = append(list, newStage(handle, stage))
 	}
 	return list
 }
 
-func newStage(operationID string, stage gateway.Stage) Stage {
+func newStage(handle string, stage gateway.Stage) Stage {
 	return Stage{
 		ID:              stage.ID,
 		Name:            stage.Name,
@@ -175,24 +185,25 @@ func newStage(operationID string, stage gateway.Stage) Stage {
 		StartedAt:       stage.StartedAt.ISO8601(),
 		DurationSeconds: stage.Duration,
 		Parent:          stage.Parent,
-		Logs:            LogsCommand(operationID, stage.Name),
+		Logs:            LogsCommand(handle, stage.Name),
 	}
 }
 
 // NewLog projects a log response. stageQuery is what the caller asked for;
 // the app resolves it, so the answer names the stage it actually matched.
-func NewLog(operationID string, log *gateway.BuildLog) Log {
-	result := Log{OK: true, RunID: runs.Format(operationID), Truncated: log.Truncated, Text: log.Text}
+// handle is the run ID or run URL the caller named the run by.
+func NewLog(handle string, log *gateway.BuildLog) Log {
+	result := Log{OK: true, RunID: handle, Truncated: log.Truncated, Text: log.Text}
 	if log.Stage != nil {
-		stage := newStage(operationID, *log.Stage)
+		stage := newStage(handle, *log.Stage)
 		result.Stage = &stage
 	}
 	return result
 }
 
 // LogsCommand prints a run's console output, or one stage's when named.
-func LogsCommand(operationID, stage string) string {
-	command := "buildcaptain logs " + runs.Format(operationID)
+func LogsCommand(handle, stage string) string {
+	command := "buildcaptain logs " + shellQuote(handle)
 	if stage != "" {
 		command += " --stage " + shellQuote(stage)
 	}
@@ -229,13 +240,13 @@ func newJenkins(operation *gateway.Operation) *Jenkins {
 
 // PollCommand checks this run once and returns.
 func PollCommand(operation *gateway.Operation) string {
-	return "buildcaptain status " + runs.Format(operation.ID)
+	return "buildcaptain status " + shellQuote(Handle(operation))
 }
 
 // ResumeCommand blocks on this run until it finishes. It is what a caller
 // reaches for after a wait was cut short.
 func ResumeCommand(operation *gateway.Operation) string {
-	return "buildcaptain wait " + runs.Format(operation.ID)
+	return "buildcaptain wait " + shellQuote(Handle(operation))
 }
 
 // NewConfigs projects the gateway's configuration list, giving each entry the

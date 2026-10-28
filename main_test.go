@@ -133,3 +133,14 @@ func TestFlagErrorsAreSpecific(t *testing.T) {
 		}
 	}
 }
+
+// A run URL is a run reference like any run ID, never mistaken for a flag.
+func TestRunURLIsThePositionalRunReference(t *testing.T) {
+	const runURL = "https://jenkins.example.com/job/jobfoto-teams/job/main/481/"
+	for _, policy := range []flagPolicy{policyReading, policyWait, policyLogs} {
+		_, positional, err := parseFlags([]string{runURL, "--verbose"}, policy)
+		if err != nil || len(positional) != 1 || positional[0] != runURL {
+			t.Errorf("positional = %v, err = %v", positional, err)
+		}
+	}
+}

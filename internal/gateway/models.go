@@ -47,6 +47,10 @@ type Request struct {
 	// the whole build. Lines keeps only that many from the end; nil keeps all.
 	Stage string `json:"stage,omitempty"`
 	Lines *int   `json:"lines,omitempty"`
+	// RunURL names a Jenkins run in place of OperationID, for status, stages,
+	// and log on runs no agent started. An app that predates it ignores the
+	// field and answers "operation not found"; Send translates that.
+	RunURL string `json:"runURL,omitempty"`
 }
 
 // Response mirrors AgentGatewayResponse. Version and ID are transport
@@ -62,6 +66,8 @@ type Response struct {
 	Stages         []Stage               `json:"stages,omitempty"`
 	StagesComplete *bool                 `json:"stagesComplete,omitempty"`
 	Log            *BuildLog             `json:"log,omitempty"`
+	// Run answers a status request made with RunURL.
+	Run *RunReport `json:"run,omitempty"`
 
 	// Raw is the exact response line, kept for --verbose so the wire form
 	// stays inspectable after the CLI has reshaped it.

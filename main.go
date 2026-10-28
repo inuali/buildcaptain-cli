@@ -40,6 +40,8 @@ Usage:
   buildcaptain mcp                           Serve the gateway to AI agents over MCP
   buildcaptain version
 
+A Jenkins run URL works wherever a run ID does.
+
 Flags for run:
   --input NAME=VALUE   Supply one allowed input; repeat for more
   --no-wait            Return as soon as the build is accepted, with a run ID to poll

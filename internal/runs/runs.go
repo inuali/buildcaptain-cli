@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -116,6 +117,38 @@ func Resolve(value string) (string, error) {
 		return "", fmt.Errorf("%q matches more than one recent run: %s.",
 			text, strings.Join(descriptions, ", "))
 	}
+}
+
+// IsURL reports whether a run reference is a Jenkins run URL rather than a
+// run ID. Any http(s) scheme counts, so a malformed URL is explained as a URL
+// instead of as a bad run ID.
+func IsURL(value string) bool {
+	text := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(text, "http://") || strings.HasPrefix(text, "https://")
+}
+
+// ParseURL checks that a run URL is at least shaped like one before it is
+// sent. BuildCaptain makes the real decision — the URL must be on its Jenkins
+// server, under a job one of its run configurations covers — so this only
+// catches what could never pass, with a message that says why.
+func ParseURL(value string) (string, error) {
+	text := strings.TrimSpace(value)
+	// The value is not echoed: a mistyped URL may carry credentials.
+	invalid := errors.New(
+		"This is not a Jenkins run URL. Run URLs look like https://jenkins.example.com/job/<job>/<number>/.")
+	if strings.ContainsAny(text, "?# \t\n\r\\") {
+		return "", invalid
+	}
+	parsed, err := url.Parse(text)
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Opaque != "" {
+		return "", invalid
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return "", invalid
+	}
+	return text, nil
 }
 
 // Entry is one remembered run.

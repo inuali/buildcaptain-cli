@@ -87,6 +87,10 @@ type Operation struct {
 	RunID             *JenkinsRun       `json:"runID"`
 	Result            string            `json:"result"`
 	ResolvedJob       *JenkinsJob       `json:"resolvedJob"`
+
+	// RunURL is set only on an operation built from a RunReport: the run is
+	// then addressed by this URL rather than by ID.
+	RunURL string `json:"-"`
 }
 
 // JenkinsRun mirrors RunID: the Jenkins-side build this operation produced.
@@ -169,4 +173,31 @@ type BuildLog struct {
 	Stage     *Stage `json:"stage"`
 	Text      string `json:"text"`
 	Truncated bool   `json:"truncated"`
+}
+
+// RunReport mirrors AgentRunReport: a Jenkins run looked up by URL, with no
+// agent operation behind it.
+type RunReport struct {
+	URL               string `json:"url"`
+	Number            int    `json:"number"`
+	Job               string `json:"job"`
+	ConfigurationKey  string `json:"configurationKey"`
+	ConfigurationName string `json:"configurationName"`
+	State             string `json:"state"`
+	Result            string `json:"result"`
+}
+
+// Operation presents the run in the shape every command already reports on,
+// so a run named by URL prints, waits, and exits exactly like one started by
+// an agent.
+func (r *RunReport) Operation() *Operation {
+	return &Operation{
+		ConfigurationKey:  r.ConfigurationKey,
+		ConfigurationName: r.ConfigurationName,
+		State:             r.State,
+		Result:            r.Result,
+		RunID:             &JenkinsRun{Number: r.Number, URL: r.URL},
+		ResolvedJob:       &JenkinsJob{FullDisplayName: r.Job},
+		RunURL:            r.URL,
+	}
 }

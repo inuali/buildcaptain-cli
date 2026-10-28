@@ -40,13 +40,43 @@ type fakeGateway struct {
 	silent map[gateway.Action]bool
 	// last is the most recent request, for asserting what was sent.
 	last gateway.Request
+	// requests is every request, in order.
+	requests []gateway.Request
+	// runs answers status requests made by run URL, walked like states.
+	runs []gateway.RunReport
+	// runURLErr is the app's refusal of any request made by run URL.
+	runURLErr string
+	// legacy behaves like an app that predates run URLs: it ignores the
+	// field and finds no operation.
+	legacy bool
 }
 
 func (f *fakeGateway) handle(request gateway.Request) gateway.Response {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	f.last = request
+	f.requests = append(f.requests, request)
 	response := gateway.Response{Version: gateway.ProtocolVersion, ID: request.ID, OK: true}
+	if f.legacy && request.OperationID == "" && request.Action != gateway.ActionTrigger &&
+		request.Action != gateway.ActionListConfigurations {
+		return gateway.Response{Version: gateway.ProtocolVersion, ID: request.ID, Error: "Agent build operation not found."}
+	}
+	if request.RunURL != "" {
+		if f.runURLErr != "" {
+			return gateway.Response{Version: gateway.ProtocolVersion, ID: request.ID, Error: f.runURLErr}
+		}
+		switch request.Action {
+		case gateway.ActionStatus:
+			f.polls++
+			report := f.runs[min(f.polls-1, len(f.runs)-1)]
+			response.Run = &report
+		case gateway.ActionStages:
+			response.Stages = f.stages
+		case gateway.ActionLog:
+			response.Log = f.log
+		}
+		return response
+	}
 	switch request.Action {
 	case gateway.ActionStages:
 		operation := f.states[len(f.states)-1]
@@ -87,6 +117,12 @@ func (f *fakeGateway) lastRequest() gateway.Request {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	return f.last
+}
+
+func (f *fakeGateway) allRequests() []gateway.Request {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	return append([]gateway.Request(nil), f.requests...)
 }
 
 func (f *fakeGateway) pollCount() int {

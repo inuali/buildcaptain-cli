@@ -55,7 +55,7 @@ type triggerInput struct {
 type statusInput struct {
 	// Optional: omitting it reports on the most recent run, which is what an
 	// agent that lost track of the ID actually wants.
-	RunID string `json:"run_id,omitempty" jsonschema:"The run_id returned by trigger_run; omit for the most recent run"`
+	RunID string `json:"run_id,omitempty" jsonschema:"The run_id returned by trigger_run, or a Jenkins run URL; omit for the most recent run"`
 	// WaitSecs turns a single read into a blocking follow, so an agent whose
 	// trigger_run timed out does not have to build its own polling loop.
 	WaitSecs int `json:"wait_seconds,omitempty" jsonschema:"Block for up to this many seconds waiting for the run to finish (default 0, report once and return)"`
@@ -65,7 +65,7 @@ type statusInput struct {
 }
 
 type logsInput struct {
-	RunID string `json:"run_id,omitempty" jsonschema:"The run_id returned by trigger_run; omit for the most recent run"`
+	RunID string `json:"run_id,omitempty" jsonschema:"The run_id returned by trigger_run, or a Jenkins run URL; omit for the most recent run"`
 	Stage string `json:"stage,omitempty" jsonschema:"A stage name or id from the run's stages list; omit for the whole build's console output"`
 	Tail  int    `json:"tail_lines,omitempty" jsonschema:"Only the last N lines (default 200; -1 keeps everything the app allows)"`
 }
@@ -74,6 +74,11 @@ type logsInput struct {
 // directory whose Git repository identifies the caller — captured at process
 // start so the gateway dial's chdir can never affect it.
 func Run(ctx context.Context, version, workspaceDir string) error {
+	return newServer(version, workspaceDir).Run(ctx, &mcp.StdioTransport{})
+}
+
+// newServer builds the server with its tools, independent of the transport.
+func newServer(version, workspaceDir string) *mcp.Server {
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "buildcaptain", Version: version},
 		&mcp.ServerOptions{Instructions: instructions},
@@ -174,7 +179,7 @@ func Run(ctx context.Context, version, workspaceDir string) error {
 		},
 	)
 
-	return server.Run(ctx, &mcp.StdioTransport{})
+	return server
 }
 
 // result renders a runner result as the tool's reply. A build that failed is

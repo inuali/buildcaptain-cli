@@ -32,6 +32,7 @@ type SendParams struct {
 	OperationID     string
 	Stage           string
 	Lines           *int
+	RunURL          string
 }
 
 // errNoResponse marks a connection the app accepted but closed without
@@ -52,11 +53,12 @@ func Send(params SendParams) Response {
 		OperationID:     params.OperationID,
 		Stage:           params.Stage,
 		Lines:           params.Lines,
+		RunURL:          params.RunURL,
 	}
 
 	response, err := roundTrip(request)
 	if err == nil {
-		return response
+		return explainOldApp(request, response)
 	}
 	if errors.Is(err, errNoResponse) {
 		return unansweredResponse(request)
@@ -65,7 +67,7 @@ func Send(params SendParams) Response {
 	for range 20 {
 		time.Sleep(250 * time.Millisecond)
 		if response, err = roundTrip(request); err == nil {
-			return response
+			return explainOldApp(request, response)
 		}
 		if errors.Is(err, errNoResponse) {
 			return unansweredResponse(request)
@@ -74,9 +76,30 @@ func Send(params SendParams) Response {
 	return failureResponse(request.ID, "BuildCaptain is not running or Agent Access is disabled.")
 }
 
+// legacyNotFound is what an app that predates RunURL answers a request
+// carrying one: it ignores the unknown field and finds no operation. An app
+// that knows RunURL never says this for such a request.
+const legacyNotFound = "Agent build operation not found."
+
+// runURLNeedsNewerApp explains why a run URL was not understood.
+const runURLNeedsNewerApp = "Looking up a run by its Jenkins URL needs a newer BuildCaptain. Update it from the App Store."
+
+// explainOldApp replaces an old app's misleading not-found for a run URL.
+func explainOldApp(request Request, response Response) Response {
+	if request.RunURL != "" && !response.OK && response.Error == legacyNotFound {
+		explained := failureResponse(request.ID, runURLNeedsNewerApp)
+		explained.Raw = response.Raw
+		return explained
+	}
+	return response
+}
+
 // unansweredResponse explains a silent close. The app drops requests it cannot
 // decode, which for the newer actions means it predates them.
 func unansweredResponse(request Request) Response {
+	if request.RunURL != "" {
+		return failureResponse(request.ID, runURLNeedsNewerApp)
+	}
 	switch request.Action {
 	case ActionStages, ActionLog:
 		return failureResponse(request.ID,
